@@ -8,12 +8,13 @@ import Glibc
 // with one phone. Uses the same NetHost / NetGuest code as the app.
 //
 //   strumnet join <address[:port]> [--name PC] [--no-song]
-//       Joins the phone's session. Claims to have every song (unless
-//       --no-song), plays along with a simulated score, reports results.
+//       Joins the phone's session. Claims to have every song; with
+//       --no-song it says it doesn't, so the host sends it (checked and
+//       kept in a temp folder). Plays along with a simulated score.
 //   strumnet host [--name PC] [--songs <folder>] [--wait 20]
 //       Hosts a session. Picks the first song in --songs (default: the
-//       bundled demo) and starts it for everyone once a guest has it, or
-//       after --wait seconds. Plays along with a simulated score.
+//       bundled demo), sends it to guests who don't have it, and starts it
+//       for everyone once a guest has it, or after --wait seconds.
 
 /// Prints and flushes at once (output is often piped / tee'd while testing).
 func say(_ s: String) { print(s); fflush(nil) }
@@ -108,7 +109,16 @@ if mode == "join" {
     var play: FakePlay?
     var lastReport = 0.0, lastBoard = "", lastBoardAt = 0.0
     g.send = { c.send($0) }
-    g.hasSong = { hash in say("\(stamp()) host picked \(g.song?.name ?? hash) — \(noSong ? "don't have it" : "have it")"); return !noSong }
+    g.hasSong = { hash in say("\(stamp()) host picked \(g.song?.name ?? hash) — \(noSong ? "don't have it, asking for it" : "have it")"); return !noSong }
+    let cache = FileManager.default.temporaryDirectory.appendingPathComponent("strumnet-songs", isDirectory: true)
+    g.songCache = cache
+    var receivedSong: SongEntry?
+    g.onSongReceived = { e in
+        receivedSong = e
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: e.url.path).count) ?? 1
+        say("\(stamp()) received \(e.name) — \(e.artist): \(files) file(s), chart hash \(e.chartHash) ✓ (in \(e.url.path))")
+    }
+    var lastPct = -1
     g.onChange = {
         let board = g.scores.map { s in "\(g.players.first { $0.id == s.playerID }?.name ?? s.playerID) \(s.score)" }.joined(separator: " · ")
         if !board.isEmpty && board != lastBoard && now() - lastBoardAt >= 2 { lastBoard = board; lastBoardAt = now(); say("\(stamp()) scoreboard: \(board)") }
@@ -116,7 +126,8 @@ if mode == "join" {
     g.onStart = { hash, at, speed in
         let wait = at - now()
         say("\(stamp()) start \(hash) in \(String(format: "%.3f", wait)) s (speed \(speed), clock offset \(String(format: "%.1f", (g.clock.offset ?? 0) * 1000)) ms, best RTT \(String(format: "%.0f", (g.clock.bestRTT ?? 0) * 1000)) ms)")
-        if !noSong { play = FakePlay(start: at, length: min(30, Double(g.song?.lengthMs ?? 30000) / 1000)) }
+        if !noSong || receivedSong?.chartHash == hash { play = FakePlay(start: at, length: min(30, Double(g.song?.lengthMs ?? 30000) / 1000)) }
+        else { say("\(stamp()) don't have it: sitting this one out") }
     }
     g.onAbort = { say("\(stamp()) host stopped the song"); play = nil }
     g.onEnd = { reason in say("\(stamp()) session over: \(reason)"); exit(0) }
@@ -132,6 +143,10 @@ if mode == "join" {
         }
         let t = now()
         g.tick(now: t)
+        if let r = g.receiver, !r.done, r.offer.totalBytes > 0 {
+            let pct = Int(Double(r.received) * 100 / Double(r.offer.totalBytes))
+            if pct / 10 != lastPct / 10 { lastPct = pct; say("\(stamp()) receiving \(r.offer.song.name): \(pct)% of \(r.offer.totalBytes / 1_000_000) MB") }
+        }
         let ps = g.players.map { "\($0.name)[\($0.instrument.rawValue)/\($0.difficulty.displayName)\($0.hasSong == true ? " ✓" : $0.hasSong == false ? " ✗" : "")]" }.joined(separator: ", ")
         if ps != lastPlayers { lastPlayers = ps; say("\(stamp()) lobby: \(ps)") }
         if let pl = play, t >= pl.start {
@@ -159,6 +174,12 @@ say("\(stamp()) song: \(song.name) — \(song.artist) [\(song.chartHash)]")
 let h = NetHost(host: me)
 var conns: [Int32: Conn] = [:]
 h.send = { fd, m in conns[Int32(fd)]?.send(m) }
+h.sendChunk = { fd, c in conns[Int32(fd)]?.out.append(NetFramer.encode(c)) }
+// Flow control: keep at most ~512 KB queued per guest.
+h.canSend = { fd in (conns[Int32(fd)]?.out.count ?? Int.max) < 512 * 1024 }
+let source = NetSongSource.make(for: song)
+h.songSource = { $0 == song.chartHash ? source : nil }
+say("\(stamp()) can send it to guests who don't have it: \(source.map { "\($0.offer.files.count) files, \($0.offer.totalBytes / 1_000_000) MB" } ?? "no")")
 var lastBoard = "", lastBoardAt = 0.0
 h.onChange = {
     let board = h.players.compactMap { p in h.scores[p.id].map { "\(p.name) \($0.score)" } }.joined(separator: " · ")
@@ -169,7 +190,8 @@ var play: FakePlay?
 var lastReport = 0.0, lastPlayers = ""
 var picked = false, finishedSong = false
 while true {
-    var fds = [pollfd(fd: lfd, events: Int16(POLLIN), revents: 0)] + conns.keys.map { pollfd(fd: $0, events: Int16(POLLIN), revents: 0) }
+    // Wake for writing too while a guest has data queued (song transfers).
+    var fds = [pollfd(fd: lfd, events: Int16(POLLIN), revents: 0)] + conns.map { pollfd(fd: $0.key, events: Int16(POLLIN) | ($0.value.out.isEmpty ? 0 : Int16(POLLOUT)), revents: 0) }
     _ = poll(&fds, nfds_t(fds.count), 50)
     if fds[0].revents & Int16(POLLIN) != 0 {
         let cfd = accept(lfd, nil, nil)
@@ -178,12 +200,12 @@ while true {
     for p in fds.dropFirst() where p.revents & Int16(POLLIN | POLLHUP | POLLERR) != 0 {
         guard let c = conns[p.fd] else { continue }
         guard let d = c.read() else { conns[p.fd] = nil; close(p.fd); h.disconnected(Int(p.fd)); say("\(stamp()) \(p.fd) left"); continue }
-        do { for m in try c.framer.append(d) { h.receive(m, from: Int(p.fd), now: now()) } }
+        do { for case .message(let m) in try c.framer.append(d) { h.receive(m, from: Int(p.fd), now: now()) } }
         catch { conns[p.fd] = nil; close(p.fd); h.disconnected(Int(p.fd)) }
     }
     let t = now()
     h.tick(now: t)
-    let ps = h.players.map { "\($0.name)[\($0.instrument.rawValue)/\($0.difficulty.displayName)\($0.hasSong == true ? " ✓" : $0.hasSong == false ? " ✗" : "")]" }.joined(separator: ", ")
+    let ps = h.players.map { "\($0.name)[\($0.instrument.rawValue)/\($0.difficulty.displayName)\($0.hasSong == true ? " ✓" : $0.hasSong == false ? " ✗" : "")\($0.download.map { " ↓\(Int($0 * 10) * 10)%" } ?? "")]" }.joined(separator: ", ")
     if ps != lastPlayers { lastPlayers = ps; say("\(stamp()) lobby: \(ps)") }
     if h.players.count > 1 && firstGuestAt == nil { firstGuestAt = t }
     if let f = firstGuestAt, !picked, t - f > 2 {
@@ -193,7 +215,8 @@ while true {
     }
     if picked, play == nil, !finishedSong, h.phase == .lobby {
         let anyReady = h.players.dropFirst().contains { $0.hasSong == true }
-        if anyReady || t - (firstGuestAt ?? t) > waitSeconds + 2 {
+        let stillSending = h.sending
+        if (anyReady && !stillSending) || t - (firstGuestAt ?? t) > waitSeconds + 2 {
             let at = t + 5
             h.start(at: at, speed: 1)
             play = FakePlay(start: at, length: min(30, Double(song.lengthMs) / 1000))

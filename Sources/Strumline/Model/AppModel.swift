@@ -146,6 +146,8 @@ final class AppModel: ObservableObject {
         if let d = try? Data(contentsOf: AppModel.cacheFile), let c = try? JSONDecoder().decode([SongEntry].self, from: d) {
             songs = c
         }
+        // Songs an online host sent last time (if the app quit mid-session).
+        OnlineSession.clearSongCache()
         rebaseAppPaths()
         _ = resolveRoots()
         if songs.isEmpty { rescan() } else { scanStatus = "\(songs.count) songs" }
@@ -490,7 +492,9 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 var out: [GameResult] = []
                 for var r in results {
-                    if practice == nil && !r.modifiers.disablesScoreSaving { r.newBest = record(r) }
+                    // Songs sent by an online host aren't yours: shown, not saved.
+                    let borrowed = r.song.path.hasPrefix(OnlineSession.songCache.path)
+                    if practice == nil && !r.modifiers.disablesScoreSaving && !borrowed { r.newBest = record(r) }
                     out.append(r)
                 }
                 lastResults = out

@@ -71,9 +71,10 @@ private struct LobbyView: View {
     private func status(_ p: NetPlayer) -> (String, String) {
         if !p.connected { return ("wifi.slash", "Disconnected") }
         guard session.song != nil else { return ("person.fill", "") }
+        if let d = p.download { return ("arrow.down.circle", "Getting the song: \(Int(d * 100))%") }
         switch p.hasSong {
         case true?: return ("checkmark.circle.fill", "Has the song")
-        case false?: return ("xmark.circle", "Doesn't have it: sits out")
+        case false?: return ("xmark.circle", session.isHost ? "Doesn't have it" : "Doesn't have it: sits out")
         case nil: return ("ellipsis.circle", "Checking…")
         }
     }
@@ -100,9 +101,12 @@ private struct LobbyView: View {
             r.append(NavRow(id: "pick", section: "Song", title: o.song == nil ? "Pick a song…" : "Pick another song…", symbol: "music.note.list",
                             kind: .button(destructive: false) { app.screen = .songs(practice: false) }))
             if o.song != nil {
-                let out = o.players.filter { $0.connected && $0.id != "host" && $0.hasSong == false }.count
+                let guests = o.players.filter { $0.connected && $0.id != "host" }
+                let getting = guests.filter { $0.download != nil }.count
+                let out = guests.filter { $0.hasSong == false && $0.download == nil }.count
                 r.append(NavRow(id: "start", section: "Song", title: "Start for everyone",
-                                detail: out > 0 ? "\(out) player(s) don't have it and will sit out" : "Starts on every device 4 seconds after you press it",
+                                detail: getting > 0 ? "\(getting) player(s) still getting the song: wait, or they'll sit this one out"
+                                    : out > 0 ? "\(out) player(s) don't have it and will sit out" : "Starts on every device 4 seconds after you press it",
                                 symbol: "play.fill", kind: .button(destructive: false) { o.startSong(speed: app.settings.modifiers.songSpeed) }))
             }
         }

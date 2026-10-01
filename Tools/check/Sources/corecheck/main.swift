@@ -447,10 +447,10 @@ do {
     let stream = msgs.reduce(Data()) { $0 + NetFramer.encode($1) }
     var ok = true
     for chunk in [1, 3, 7, 64, stream.count] {
-        var f = NetFramer(); var got: [NetMessage] = []
+        var f = NetFramer(); var got: [NetIncoming] = []
         var i = 0
         while i < stream.count { got += try f.append(stream.subdata(in: i..<min(stream.count, i + chunk))); i += chunk }
-        if got != msgs { ok = false; fail("F1 framing (chunks of \(chunk)): got \(got.count)/\(msgs.count)") }
+        if got != msgs.map(NetIncoming.message) { ok = false; fail("F1 framing (chunks of \(chunk)): got \(got.count)/\(msgs.count)") }
     }
     if ok { print("  ✓ F1 framing: \(msgs.count) messages round-trip through 1/3/7/64-byte and whole splits") }
     var big = NetFramer()
@@ -538,6 +538,81 @@ do {
     host.endSong(abort: false)
     check(host.phase == .lobby && host.players.count == 2, "F1 session: back to lobby without the dropped player")
 }
+
+// F1 phase 2: sending a song to a guest who doesn't have it.
+do {
+    // Chunk frames round-trip (binary, not JSON) between JSON frames.
+    let ch = NetChunk(chartHash: "abc123", file: 3, offset: 1 << 33, bytes: Data((0..<5000).map { UInt8($0 % 251) }))
+    var fr = NetFramer()
+    let got = try fr.append(NetFramer.encode(.leave) + NetFramer.encode(ch) + NetFramer.encode(.abort))
+    check(got == [.message(.leave), .chunk(ch), .message(.abort)], "F1 transfer: binary chunk frame round-trips between messages")
+
+    // Hostile or broken offers are refused before anything is written.
+    let s0 = NetSong(chartHash: "abc123", name: "x", artist: "y", lengthMs: 1)
+    let bad: [(String, NetSongOffer)] = [
+        ("path", NetSongOffer(song: s0, files: [.init(name: "../evil", size: 1)], isSng: false)),
+        ("absolute", NetSongOffer(song: s0, files: [.init(name: "/etc/passwd", size: 1)], isSng: false)),
+        ("hidden", NetSongOffer(song: s0, files: [.init(name: ".profile", size: 1)], isSng: false)),
+        ("huge", NetSongOffer(song: s0, files: [.init(name: "song.ogg", size: Net.maxSongBytes + 1)], isSng: false)),
+        ("dupes", NetSongOffer(song: s0, files: [.init(name: "a.ogg", size: 1), .init(name: "a.ogg", size: 1)], isSng: false)),
+        ("hash", NetSongOffer(song: NetSong(chartHash: "../x", name: "", artist: "", lengthMs: 0), files: [.init(name: "a", size: 1)], isSng: false)),
+    ]
+    let refused = bad.filter { NetSongReceiver.problem(with: $0.1) != nil }.map(\.0)
+    check(refused.count == bad.count, "F1 transfer: refuses unsafe offers (\(refused.joined(separator: ", ")))")
+
+    // Whole transfer of the demo song, host → guest, with flow control.
+    let demoRoot = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "../../Sources/Strumline/Resources/Songs/Strumline Demo")
+    guard let demo = LibraryScanner.scan(roots: [demoRoot], cache: [:]).songs.first,
+          let source = NetSongSource.make(for: demo) else { throw ChartError.invalid("no demo song to send") }
+    func transfer(corruptAt: Int? = nil) throws -> (NetHost, NetGuest, SongEntry?, URL) {
+        let host = NetHost(host: NetPlayer(id: "", name: "Ant", instrument: .guitar, difficulty: .expert))
+        let guest = NetGuest(me: NetPlayer(id: "", name: "PC", instrument: .guitar, difficulty: .expert))
+        let cache = scratch.appendingPathComponent("netcache-\(corruptAt ?? -1)", isDirectory: true)
+        guest.songCache = cache
+        guest.hasSong = { _ in false }
+        var received: SongEntry?
+        guest.onSongReceived = { received = $0 }
+        var inFlight: [NetIncoming] = [], chunksSent = 0
+        host.send = { _, m in inFlight.append(.message(m)) }
+        host.sendChunk = { _, c in
+            var c = c
+            if chunksSent == corruptAt, !c.bytes.isEmpty { c.bytes[c.bytes.startIndex] ^= 0xFF }
+            chunksSent += 1
+            var f = NetFramer()
+            inFlight += (try? f.append(NetFramer.encode(c))) ?? []
+        }
+        host.canSend = { _ in inFlight.count < 3 }   // a small window, like a socket buffer
+        host.songSource = { $0 == source.offer.song.chartHash ? source : nil }
+        guest.send = { m in host.receive(m, from: 1, now: 0) }
+        guest.connected(now: 0)
+        while !inFlight.isEmpty { guest.receive(inFlight.removeFirst(), now: 0) }
+        host.pick(source.offer.song)
+        var rounds = 0
+        repeat {
+            while !inFlight.isEmpty { guest.receive(inFlight.removeFirst(), now: 0) }
+            host.tick(now: Double(rounds))
+            rounds += 1
+        } while (!inFlight.isEmpty || host.sending) && rounds < 100_000
+        return (host, guest, received, cache)
+    }
+    let (host, _, entry, cache) = try transfer()
+    let mb = String(format: "%.1f", Double(source.offer.totalBytes) / 1_000_000)
+    var same = entry != nil
+    if let e = entry {
+        for f in source.offer.files {
+            let a = try? Data(contentsOf: demo.url.appendingPathComponent(f.name)), b = try? Data(contentsOf: e.url.appendingPathComponent(f.name))
+            if a == nil || a != b { same = false }
+        }
+    }
+    check(same && entry?.chartHash == demo.chartHash && host.players.last?.hasSong == true && entry?.url.path.hasPrefix(cache.path) == true,
+          "F1 transfer: \(source.offer.files.count) files (\(mb) MB) arrive byte-identical, load as the same song (hash \(entry?.chartHash ?? "–")), guest marked as having it")
+
+    // A corrupted byte in the chart is caught; nothing is kept.
+    let (host2, _, entry2, cache2) = try transfer(corruptAt: 0)
+    let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: cache2.path))?.count ?? 0
+    check(entry2 == nil && host2.players.last?.hasSong == false && leftovers == 0,
+          "F1 transfer: a corrupted chart is rejected and deleted (guest marked as not having it)")
+} catch { fail("F1 transfer: \(error)") }
 
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) FAILURE(S)")
 exit(failures == 0 ? 0 : 1)

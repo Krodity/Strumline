@@ -30,9 +30,13 @@ extension AppModel {
 
     private func wire(_ o: OnlineSession) {
         o.hasSong = { [weak self] hash in self?.songs.contains { $0.chartHash == hash } ?? false }
+        o.songSource = { [weak self] hash in
+            self?.songs.first { $0.chartHash == hash }.flatMap(NetSongSource.make)
+        }
         o.onStart = { [weak self, weak o] hash, at, speed in
             guard let self else { return }
-            guard let song = songs.first(where: { $0.chartHash == hash }) else {
+            // A library song, or one the host sent for this session.
+            guard let song = songs.first(where: { $0.chartHash == hash }) ?? o?.receivedSongs[hash] else {
                 o?.status = "You don't have this song, so you're sitting this one out"
                 return
             }

@@ -11,6 +11,20 @@ public final class NetHost {
     public var send: (_ connection: Int, _ message: NetMessage) -> Void = { _, _ in }
     /// Lobby, song status, scoreboard or results changed (update the UI).
     public var onChange: () -> Void = {}
+    /// Sends a song chunk (binary frame) to one connection.
+    public var sendChunk: (_ connection: Int, _ chunk: NetChunk) -> Void = { _, _ in }
+    /// Whether a connection can take another chunk now (flow control: the
+    /// transport keeps only a little queued per connection).
+    public var canSend: (_ connection: Int) -> Bool = { _ in true }
+    /// The host's files for a song, to send to guests who don't have it.
+    public var songSource: (_ chartHash: String) -> NetSongSource? = { _ in nil }
+
+    private struct Transfer {
+        var source: NetSongSource
+        var file = 0
+        var offset: Int64 = 0
+    }
+    private var transfers: [Int: Transfer] = [:]
 
     public private(set) var players: [NetPlayer]
     public private(set) var song: NetSong?
@@ -65,6 +79,29 @@ public final class NetHost {
         case .songStatus(let hash, let has):
             guard hash == song?.chartHash else { return }
             players[i].hasSong = has
+            // Doesn't have it: offer to send it.
+            if !has, phase == .lobby, let src = songSource(hash) { send(c, .songOffer(src.offer)) }
+            broadcastLobby()
+        case .songAccept(let hash):
+            guard hash == song?.chartHash, let src = songSource(hash) else { return }
+            transfers[c] = Transfer(source: src)
+            players[i].download = 0
+            broadcastLobby()
+            pump()
+        case .songDecline(let hash, _):
+            guard hash == song?.chartHash else { return }
+            transfers[c] = nil
+            players[i].download = nil
+            broadcastLobby()
+        case .transferProgress(let hash, let received, let total):
+            guard hash == song?.chartHash, total > 0 else { return }
+            players[i].download = min(1, Double(received) / Double(total))
+            broadcastLobby()
+        case .songReceived(let hash, let ok, _):
+            guard hash == song?.chartHash else { return }
+            transfers[c] = nil
+            players[i].download = nil
+            players[i].hasSong = ok
             broadcastLobby()
         case .progress(var s):
             s.playerID = id
@@ -83,6 +120,7 @@ public final class NetHost {
 
     /// The connection closed (or sent `leave`).
     public func disconnected(_ c: Int) {
+        transfers[c] = nil
         guard let id = playerOf.removeValue(forKey: c) else { return }
         if phase == .lobby {
             players.removeAll { $0.id == id }
@@ -95,7 +133,8 @@ public final class NetHost {
     /// Host picks a song (it must have it). Guests answer with songStatus.
     public func pick(_ s: NetSong) {
         song = s
-        for i in players.indices { players[i].hasSong = i == 0 ? true : nil }
+        transfers = [:]
+        for i in players.indices { players[i].hasSong = i == 0 ? true : nil; players[i].download = nil }
         broadcast(.pick(s))
         broadcastLobby()
     }
@@ -144,8 +183,40 @@ public final class NetHost {
         broadcastLobby()
     }
 
-    /// Call ~10×/s: sends the scoreboard (at most 4×/s, only on change).
+    /// Sends song chunks while the connections can take them.
+    public func pump() {
+        for c in Array(transfers.keys) {
+            while var t = transfers[c], canSend(c) {
+                let files = t.source.offer.files
+                guard t.file < files.count else { transfers[c] = nil; break }  // all sent; wait for songReceived
+                let f = files[t.file]
+                let n = Int(min(Int64(Net.chunkSize), f.size - t.offset))
+                if n > 0 {
+                    guard let bytes = t.source.read(t.file, t.offset, n), bytes.count == n else {
+                        // Our own file went missing: stop, they sit this one out.
+                        transfers[c] = nil
+                        if let id = playerOf[c], let i = players.firstIndex(where: { $0.id == id }) {
+                            players[i].download = nil
+                            players[i].hasSong = false
+                        }
+                        broadcastLobby()
+                        break
+                    }
+                    sendChunk(c, NetChunk(chartHash: t.source.offer.song.chartHash, file: t.file, offset: t.offset, bytes: bytes))
+                    t.offset += Int64(n)
+                }
+                if t.offset >= f.size { t.file += 1; t.offset = 0 }
+                transfers[c] = t
+            }
+        }
+    }
+
+    /// True while any guest is still being sent the song.
+    public var sending: Bool { !transfers.isEmpty }
+
+    /// Call ~10×/s: sends song chunks and the scoreboard (at most 4×/s, only on change).
     public func tick(now: Double) {
+        pump()
         guard scoresDirty, now - lastScoreboard >= 0.25 else { return }
         scoresDirty = false
         lastScoreboard = now
@@ -175,6 +246,14 @@ public final class NetGuest {
     public var onAbort: () -> Void = {}
     /// Refused or the host left.
     public var onEnd: (_ reason: String) -> Void = { _ in }
+    /// Where songs sent by the host are put (a session cache, not the library).
+    public var songCache: URL?
+    /// A sent song arrived and checked out; play it from here.
+    public var onSongReceived: (SongEntry) -> Void = { _ in }
+
+    /// The song being received, if any.
+    public private(set) var receiver: NetSongReceiver?
+    private var lastProgress = -Double.infinity
 
     public private(set) var me: NetPlayer
     public private(set) var myID: String?
@@ -197,6 +276,10 @@ public final class NetGuest {
 
     /// Pings quickly at first (to sync the clock), then every 2 s to track drift.
     public func tick(now: Double) {
+        if let r = receiver, !r.done, now - lastProgress >= 0.25 {
+            lastProgress = now
+            send(.transferProgress(chartHash: r.offer.song.chartHash, received: r.received, total: r.offer.totalBytes))
+        }
         let interval = pings < 8 ? 0.15 : 2.0
         guard now - lastPing >= interval else { return }
         lastPing = now
@@ -214,6 +297,31 @@ public final class NetGuest {
     public func finish(_ stats: PlayStats) { send(.finished(playerID: myID ?? "", stats: stats)) }
     public func leave() { send(.leave) }
 
+    /// Feeds whatever a connection received.
+    public func receive(_ incoming: NetIncoming, now: Double) {
+        switch incoming {
+        case .message(let m): receive(m, now: now)
+        case .chunk(let c): receive(chunk: c, now: now)
+        }
+    }
+
+    public func receive(chunk c: NetChunk, now: Double) {
+        guard let r = receiver, !r.done, c.chartHash == r.offer.song.chartHash else { return }
+        do {
+            if let entry = try r.write(c) {
+                send(.transferProgress(chartHash: c.chartHash, received: r.received, total: r.offer.totalBytes))
+                send(.songReceived(chartHash: c.chartHash, ok: true, reason: ""))
+                send(.songStatus(chartHash: c.chartHash, has: true))
+                onSongReceived(entry)
+            }
+        } catch {
+            r.cancel()
+            receiver = nil
+            send(.songReceived(chartHash: c.chartHash, ok: false, reason: "\(error)"))
+        }
+        onChange()
+    }
+
     public func receive(_ m: NetMessage, now: Double) {
         switch m {
         case .welcome(let id, let host):
@@ -230,6 +338,8 @@ public final class NetGuest {
         case .pick(let s):
             song = s
             finals = [:]
+            receiver?.cancel()
+            receiver = nil
             send(.songStatus(chartHash: s.chartHash, has: hasSong(s.chartHash)))
             onChange()
         case .start(let hash, let hostTime, let speed):
@@ -248,6 +358,21 @@ public final class NetGuest {
             onAbort()
         case .leave:
             onEnd("The host left")
+        case .songOffer(let offer):
+            guard offer.song.chartHash == song?.chartHash else { return }
+            guard let cache = songCache else { send(.songDecline(chartHash: offer.song.chartHash, reason: "Can't receive songs")); return }
+            if let problem = NetSongReceiver.problem(with: offer) {
+                send(.songDecline(chartHash: offer.song.chartHash, reason: problem))
+                return
+            }
+            receiver?.cancel()
+            do {
+                receiver = try NetSongReceiver(offer: offer, cache: cache)
+                send(.songAccept(chartHash: offer.song.chartHash))
+            } catch {
+                send(.songDecline(chartHash: offer.song.chartHash, reason: "\(error)"))
+            }
+            onChange()
         default:
             break
         }

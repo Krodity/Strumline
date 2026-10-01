@@ -33,6 +33,24 @@ final class OnlineSession: ObservableObject {
     /// Live scores or results changed while a song is on.
     var onScores: ([NetScore]) -> Void = { _ in }
     var onFinals: () -> Void = {}
+    /// Host: the files of a library song, to send to guests without it.
+    var songSource: (String) -> NetSongSource? = { _ in nil }
+
+    /// Guest: songs the host sent this session (chart hash → song). Never
+    /// added to the library; deleted when the session ends.
+    @Published private(set) var receivedSongs: [String: SongEntry] = [:]
+    /// Guest: 0…1 while the picked song is arriving.
+    @Published private(set) var download: Double?
+
+    /// Where sent songs are kept (cleared at launch and when leaving).
+    static var songCache: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("NetSession", isDirectory: true)
+    }
+    static func clearSongCache() { try? FileManager.default.removeItem(at: songCache) }
+
+    /// Host: chunks queued on each connection (flow control).
+    private var inFlight: [Int: Int] = [:]
+    private var cachedSource: NetSongSource?
 
     private var host: NetHost?
     private var guest: NetGuest?
@@ -56,6 +74,15 @@ final class OnlineSession: ObservableObject {
         hostName = me.name
         h.send = { [weak self] c, m in self?.send(m, to: c) }
         h.onChange = { [weak self] in self?.pullFromHost() }
+        h.sendChunk = { [weak self] c, chunk in self?.sendChunk(chunk, to: c) }
+        // At most 8 chunks (512 KB) waiting per guest; more as they go out.
+        h.canSend = { [weak self] c in (self?.inFlight[c] ?? 99) < 8 && self?.connections[c] != nil }
+        h.songSource = { [weak self] hash in
+            guard let self else { return nil }
+            if let s = cachedSource, s.offer.song.chartHash == hash { return s }
+            cachedSource = songSource(hash)
+            return cachedSource
+        }
         pullFromHost()
         do {
             let l = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: Net.port)!)
@@ -95,7 +122,7 @@ final class OnlineSession: ObservableObject {
         receive(on: c) { [weak self] data in
             guard let self else { return false }
             do {
-                for m in try self.framers[id, default: NetFramer()].append(data) { self.host?.receive(m, from: id, now: Self.now) }
+                for case .message(let m) in try self.framers[id, default: NetFramer()].append(data) { self.host?.receive(m, from: id, now: Self.now) }
                 return true
             } catch {
                 return false  // junk: drop them
@@ -106,12 +133,25 @@ final class OnlineSession: ObservableObject {
     private func dropConnection(_ id: Int) {
         guard let c = connections.removeValue(forKey: id) else { return }
         framers[id] = nil
+        inFlight[id] = nil
         c.cancel()
         host?.disconnected(id)
     }
 
     private func send(_ m: NetMessage, to id: Int) {
         connections[id]?.send(content: NetFramer.encode(m), completion: .idempotent)
+    }
+
+    private func sendChunk(_ chunk: NetChunk, to id: Int) {
+        guard let c = connections[id] else { return }
+        inFlight[id, default: 0] += 1
+        c.send(content: NetFramer.encode(chunk), completion: .contentProcessed { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.inFlight[id] != nil else { return }
+                self.inFlight[id, default: 1] -= 1
+                self.host?.pump()
+            }
+        })
     }
 
     private func pullFromHost() {
@@ -144,6 +184,12 @@ final class OnlineSession: ObservableObject {
             self?.onAbort()
         }
         g.onEnd = { [weak self] reason in self?.finish(reason) }
+        OnlineSession.clearSongCache()
+        g.songCache = OnlineSession.songCache
+        g.onSongReceived = { [weak self] entry in
+            self?.receivedSongs[entry.chartHash] = entry
+            self?.download = nil
+        }
         status = "Connecting…"
         let c = NWConnection(to: endpoint, using: .tcp)
         guestConnection = c
@@ -164,7 +210,7 @@ final class OnlineSession: ObservableObject {
         receive(on: c) { [weak self] data in
             guard let self else { return false }
             do {
-                for m in try self.guestFramer.append(data) { self.guest?.receive(m, now: Self.now) }
+                for incoming in try self.guestFramer.append(data) { self.guest?.receive(incoming, now: Self.now) }
                 return true
             } catch { return false }
         } closed: { [weak self] in self?.finish("Connection closed") }
@@ -190,7 +236,16 @@ final class OnlineSession: ObservableObject {
         hostName = g.hostName
         if g.scores != scores { scores = g.scores; onScores(g.scores) }
         if g.finals != finals { finals = g.finals; onFinals() }
-        if let s = g.song, !playing { status = hasSong(s.chartHash) ? "Ready" : "You don't have \(s.name)" }
+        if let r = g.receiver, !r.done, r.offer.totalBytes > 0 {
+            download = Double(r.received) / Double(r.offer.totalBytes)
+        } else if g.receiver == nil || g.receiver?.done == true {
+            download = nil
+        }
+        if let s = g.song, !playing {
+            if let d = download { status = "Getting \(s.name) from the host: \(Int(d * 100))%" }
+            else if receivedSongs[s.chartHash] != nil { status = "Ready (sent by the host)" }
+            else { status = hasSong(s.chartHash) ? "Ready" : "You don't have \(s.name)" }
+        }
     }
 
     // MARK: Shared
@@ -272,6 +327,7 @@ final class OnlineSession: ObservableObject {
     func leave() {
         host?.close()
         guest?.leave()
+        if guest != nil { OnlineSession.clearSongCache() }
         // Let the goodbye go out before closing.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.teardown() }
         ended = "Left"
