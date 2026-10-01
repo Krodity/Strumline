@@ -6,6 +6,8 @@ struct LibraryView: View {
     @EnvironmentObject var app: AppModel
     @State private var importing = false
     @State private var importTypes: [UTType] = [.folder]
+    /// Unlinking takes two presses: the first arms the row.
+    @State private var armed: UUID?
 
     private var rows: [NavRow] {
         var r: [NavRow] = [
@@ -13,10 +15,15 @@ struct LibraryView: View {
             NavRow(id: "links", section: "Link from Files", title: "Link .sng Files…", kind: .button(destructive: false) { importTypes = [UTType(filenameExtension: "sng") ?? .data]; importing = true }),
         ]
         if app.locations.isEmpty {
-            r.append(NavRow(id: "none", section: "Linked (confirm to unlink)", title: "Nothing linked yet", kind: .info))
+            r.append(NavRow(id: "none", section: "Linked", title: "Nothing linked yet", kind: .info))
         }
         for loc in app.locations {
-            r.append(NavRow(id: "loc-\(loc.id)", section: "Linked (confirm to unlink)", title: (loc.isFile ? "📦 " : "📁 ") + loc.name, kind: .button(destructive: true) { app.unlink(loc) }))
+            let isArmed = armed == loc.id
+            r.append(NavRow(id: "loc-\(loc.id)", section: "Linked", title: (loc.isFile ? "📦 " : "📁 ") + loc.name,
+                            detail: isArmed ? "Press again to unlink — its songs leave the library (files aren't touched)" : "Press twice to unlink",
+                            kind: .button(destructive: isArmed) {
+                if isArmed { armed = nil; app.unlink(loc) } else { armed = loc.id }
+            }))
         }
         r += [
             NavRow(id: "appdir", section: "App folder", title: "On My iPhone › Strumline › Songs", detail: "Copy songs here with the Files app, Finder or AirDrop to keep them on the device.", kind: .info),

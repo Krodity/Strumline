@@ -139,7 +139,7 @@ struct GameView: View {
             let n = CGFloat(session.runs.count)
             let colW = geo.size.width / n
             ForEach(session.runs, id: \.index) { run in
-                if let url = CustomAssets.highwayURL(run.settings.highwayImage), let img = CustomAssets.image(url) {
+                if let url = run.highwayImageURL, let img = CustomAssets.image(url) {
                     HighwayTexture(session: session, run: run, image: img, touchControls: GameView.touchEnabled(session, run, touchOn))
                         .frame(width: colW, height: geo.size.height)
                         .position(x: colW * (CGFloat(run.index) + 0.5), y: geo.size.height / 2)

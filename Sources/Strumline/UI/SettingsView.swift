@@ -18,6 +18,8 @@ struct SettingsView: View {
     @State private var photosFilter: PHPickerFilter = .images
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var importNote: String?
+    /// Reset takes two presses: the first arms it.
+    @State private var resetArmed = false
 
     private func pct(_ v: Double) -> String { "\(Int((v * 100).rounded()))%" }
     private func x(_ v: Double) -> String { String(format: "%.2f×", v) }
@@ -58,7 +60,9 @@ struct SettingsView: View {
             NavRow(id: "custominfo", section: "Highway & backgrounds", title: "Or copy files into On My iPhone › Strumline › Custom › Highways / Backgrounds.", kind: .info),
             NavRow(id: "dim", section: "Visuals", title: "Background dim", kind: .slider(s.backgroundDim, 0...1, step: 0.05, format: pct)),
             NavRow(id: "vid", section: "Visuals", title: "Song background videos", kind: .toggle(s.showVideos)),
-            NavRow(id: "reset", section: "Reset", title: "Reset settings", kind: .button(destructive: true) {
+            NavRow(id: "reset", section: "Reset", title: resetArmed ? "Press again to reset all settings" : "Reset settings", detail: resetArmed ? nil : "Modifiers and controls are kept", kind: .button(destructive: true) {
+                guard resetArmed else { resetArmed = true; return }
+                resetArmed = false
                 let mods = app.settings.modifiers
                 app.settings = GameSettings()
                 app.settings.modifiers = mods

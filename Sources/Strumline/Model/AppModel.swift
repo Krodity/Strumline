@@ -362,7 +362,11 @@ final class AppModel: ObservableObject {
         let plays = (rec?.plays ?? 0) + 1
         var isBest = false
         if rec == nil || r.stats.score > rec!.score {
-            rec = ScoreRecord(score: r.stats.score, stars: r.stats.stars, accuracy: r.stats.accuracy, fullCombo: r.stats.fullCombo, bestStreak: r.stats.bestStreak, date: Date(), speed: r.modifiers.songSpeed, plays: plays)
+            // A higher score keeps an earlier full combo and best streak.
+            rec = ScoreRecord(score: r.stats.score, stars: r.stats.stars, accuracy: r.stats.accuracy,
+                              fullCombo: r.stats.fullCombo || (rec?.fullCombo ?? false),
+                              bestStreak: max(r.stats.bestStreak, rec?.bestStreak ?? 0),
+                              date: Date(), speed: r.modifiers.songSpeed, plays: plays)
             isBest = true
         } else {
             rec!.plays = plays
@@ -390,14 +394,20 @@ final class AppModel: ObservableObject {
         preview.stop()
         settings.lastInstrument = instrument
         settings.lastDifficulty = difficulty
+        // Practice plays at its own speed (see GameSettings.practiceSpeed).
+        let speed = practice != nil ? settings.practiceSpeed : settings.modifiers.songSpeed
+        var sessionSettings = settings
+        sessionSettings.modifiers.songSpeed = speed
         do {
             let setups = players.indices.map { i in
-                PlayerSetup(name: players[i].name,
-                            instrument: i == 0 ? instrument : players[i].instrument,
-                            difficulty: i == 0 ? difficulty : players[i].difficulty,
-                            settings: settings(forPlayer: i))
+                var ps = settings(forPlayer: i)
+                ps.modifiers.songSpeed = speed
+                return PlayerSetup(name: players[i].name,
+                                   instrument: i == 0 ? instrument : players[i].instrument,
+                                   difficulty: i == 0 ? difficulty : players[i].difficulty,
+                                   settings: ps)
             }
-            let s = try GameSession(song: song, players: setups, settings: settings, routing: deviceRouting(), practice: practice)
+            let s = try GameSession(song: song, players: setups, settings: sessionSettings, routing: deviceRouting(), practice: practice)
             s.onFinish = { [weak self] results in
                 guard let self else { return }
                 var out: [GameResult] = []

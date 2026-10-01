@@ -162,7 +162,6 @@ struct SongSelectView: View {
                                 .id(s.path)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    if selected?.path == s.path { showSetup = true }
                                     selected = s
                                     showSetup = true
                                 }

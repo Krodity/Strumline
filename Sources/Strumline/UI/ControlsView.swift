@@ -4,6 +4,8 @@ import StrumCore
 struct ControlsView: View {
     @EnvironmentObject var app: AppModel
     @ObservedObject private var input = InputManager.shared
+    /// Reset takes two presses: the first arms it.
+    @State private var resetArmed = false
 
     private func capture(_ a: GameAction) {
         input.beginCapture(a) { b in
@@ -56,7 +58,11 @@ struct ControlsView: View {
         r += bindingRows("Guitar", GameAction.guitar)
         r += bindingRows("Drums", GameAction.drums)
         r += bindingRows("Menus", GameAction.menu)
-        r.append(NavRow(id: "reset", section: "Reset", title: "Reset to defaults", kind: .button(destructive: true) { input.bindings = .defaults }))
+        r.append(NavRow(id: "reset", section: "Reset", title: resetArmed ? "Press again to replace every binding" : "Reset to defaults", kind: .button(destructive: true) {
+            guard resetArmed else { resetArmed = true; return }
+            resetArmed = false
+            input.bindings = .defaults
+        }))
         return r
     }
 

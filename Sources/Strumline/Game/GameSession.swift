@@ -57,6 +57,8 @@ final class PlayerRun {
     /// Replaces `stems` when the song lacks this part's stem.
     var stemsOverride: Set<StemRole>?
     var playerStems: Set<StemRole> { stemsOverride ?? stems }
+    /// Custom highway image, resolved once (the renderer runs every frame).
+    let highwayImageURL: URL?
 
     init(index: Int, setup: PlayerSetup, chart: SongChart, practice: PracticeRange?, loop: (Double, Double)) throws {
         self.index = index
@@ -78,12 +80,13 @@ final class PlayerRun {
         var prepared = TrackPrep.prepare(raw, modifiers: mods, drumMode: drumMode)
         if practice != nil {
             prepared.chords = prepared.chords.filter { $0.time >= loop.0 - 0.001 && $0.time < loop.1 - 0.001 }
-            TrackPrep.renumberPhrases(&prepared)
+            TrackPrep.fixPhraseEnds(&prepared)
         }
         track = prepared
         engine = PlayEngine(track: prepared, tempo: chart.tempo, sections: chart.sections, config: setup.settings.engineConfig, drumMode: drumMode, modifiers: mods)
         baseScore = engine.baseScore
         stems = Set(inst.stems)
+        highwayImageURL = CustomAssets.highwayURL(setup.settings.highwayImage)
     }
 
     func resetEngine(chart: SongChart) {
@@ -144,6 +147,8 @@ final class GameSession: ObservableObject {
     private(set) var fps: Double = 0
     private var lastFrameHost: Double = 0
     private var finished = false
+    /// `finish` has been dispatched (the frame loop keeps running until it lands).
+    private var finishQueued = false
 
     let background: UIImage?
     let albumArt: UIImage?
@@ -320,13 +325,24 @@ final class GameSession: ObservableObject {
         onFinish?(results)
     }
 
+    /// The video's own time zero is still ahead (lead-in, or a negative
+    /// video_start_time): `frame` starts it when the song gets there.
+    private var videoWaiting = false
+
     private func syncVideo(playing: Bool) {
         guard let v = videoPlayer else { return }
-        if playing {
-            let t = max(0, now + videoStart)
+        let t = now + videoStart
+        if playing && t >= 0 {
+            videoWaiting = false
             v.seek(to: CMTime(seconds: t, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
             v.rate = Float(settings.modifiers.songSpeed)
+        } else if playing {
+            // Hold on the first frame until the song reaches the video's start.
+            videoWaiting = true
+            v.pause()
+            v.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
         } else {
+            videoWaiting = false
             v.pause()
         }
     }
@@ -363,6 +379,7 @@ final class GameSession: ObservableObject {
             handleEngineEvents(r)
         }
         updateSection()
+        if videoWaiting && now + videoStart >= 0 { syncVideo(playing: true) }
 
         if practice != nil {
             if now > loopEnd + 0.8 {
@@ -374,9 +391,11 @@ final class GameSession: ObservableObject {
                     r.banners.append(Banner(text: "Run \(practiceRuns): \(acc)%", time: startTime))
                 }
                 mixer.setPaused(false)
+                syncVideo(playing: true)
                 applyGains()
             }
-        } else if now > endTime || (mixer.duration > 0 && now > mixer.duration + 0.5 && now > (runs.compactMap { $0.track.chords.last?.sustainEndTime }.max() ?? 0) + 0.5) {
+        } else if !finishQueued, now > endTime || (mixer.duration > 0 && now > mixer.duration + 0.5 && now > (runs.compactMap { $0.track.chords.last?.sustainEndTime }.max() ?? 0) + 0.5) {
+            finishQueued = true
             DispatchQueue.main.async { self.finish() }
         }
         return now + settings.videoOffsetMs / 1000
@@ -512,18 +531,5 @@ final class GameSession: ObservableObject {
     var songProgress: Double {
         let total = max(1, endTime - 2.5)
         return min(1, max(0, now / total))
-    }
-}
-
-extension TrackPrep {
-    /// After cutting a track down (practice), phrase markers must still end
-    /// on a chord that exists.
-    static func renumberPhrases(_ t: inout TrackChart) {
-        var lastOf: [Int: Int] = [:]
-        for i in t.chords.indices {
-            t.chords[i].spPhraseEnd = false
-            if t.chords[i].spPhrase >= 0 { lastOf[t.chords[i].spPhrase] = i }
-        }
-        for (_, i) in lastOf { t.chords[i].spPhraseEnd = true }
     }
 }

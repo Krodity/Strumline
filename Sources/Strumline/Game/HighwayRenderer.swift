@@ -126,7 +126,6 @@ struct HighwayRenderer {
         let layout: HighwayGeometry.TouchLayout = !touchControls ? .none : (settings.touchMode == .fretStrum && !isDrums ? .fretStrum : .lanes)
         let g = HighwayGeometry.make(size: size, settings: settings, touch: layout)
         bigTargets = layout == .lanes
-        let eng = run.engine
         let lightsOut = mods.lightsOut
         let mc = mods.modchart
         let showSurface = !lightsOut && mc == .off
@@ -140,7 +139,6 @@ struct HighwayRenderer {
         if showNotes { drawNotes(&ctx, g, t: t) }
         if showStrike { drawFlames(&ctx, g, t: t) }
         drawHUD(&ctx, g, t: t, compact: mc == .full || mc == .prep)
-        _ = eng
     }
 
     // MARK: Surface
@@ -155,7 +153,7 @@ struct HighwayRenderer {
         let sp = run.engine.spActive
         let top = sp ? Color(red: 0.05, green: 0.12, blue: 0.3) : Color(white: 0.02)
         let bottom = sp ? Color(red: 0.1, green: 0.25, blue: 0.5) : Color(white: 0.1)
-        if CustomAssets.highwayURL(settings.highwayImage) == nil {
+        if run.highwayImageURL == nil {
             ctx.fill(p, with: .linearGradient(Gradient(colors: [top.opacity(0.35), bottom.opacity(0.92)]), startPoint: g.point(0, 1), endPoint: g.point(0, 0)))
         } else if sp {
             // Star power tint over a custom highway.
@@ -229,7 +227,7 @@ struct HighwayRenderer {
             var k = Path()
             k.move(to: g.point(-0.98, 0.012))
             k.addLine(to: g.point(0.98, 0.012))
-            ctx.stroke(k, with: .color((five ? Palette.orange : Palette.orange).opacity(kickHit ? 1 : 0.5)), lineWidth: kickHit ? 7 : 4)
+            ctx.stroke(k, with: .color(Palette.orange.opacity(kickHit ? 1 : 0.5)), lineWidth: kickHit ? 7 : 4)
             for col in 0..<laneCount {
                 let lane = col + 1
                 let c = g.point(g.lanePos(col, of: laneCount), 0)
@@ -348,7 +346,7 @@ struct HighwayRenderer {
         if eng.chordState[chordIndex] == .missed { color = Color(white: 0.35) }
         let fade = brutalFade(a)
         let w = held ? 1.0 : 0.7
-        let whammy = held && t - 0 >= 0 ? eng.whammy : 0
+        let whammy = held ? eng.whammy : 0
         let steps = 14
         var p = Path()
         var left: [CGPoint] = [], right: [CGPoint] = []
@@ -620,7 +618,7 @@ struct HighwayRenderer {
             ctx.draw(Text("\(Int(session.fps)) fps").font(.system(size: 11, design: .monospaced)).foregroundColor(.white.opacity(0.6)), at: CGPoint(x: size.width - 36, y: size.height - 12))
         }
         // Lead-in countdown
-        if let first = run.track.chords.first?.time, t < first, first - t < 3.2, first - t > 0.4, session.practice == nil || true {
+        if let first = run.track.chords.first?.time, t < first, first - t < 3.2, first - t > 0.4 {
             let n = Int(ceil(first - t - 0.4))
             if n <= 3 && t < first - 0.4 && t > session.startTime + 0.2 {
                 ctx.draw(Text("\(n)").font(.system(size: 54, weight: .black, design: .rounded)).foregroundColor(.white.opacity(0.35)), at: CGPoint(x: g.cx, y: g.y(0.45)))

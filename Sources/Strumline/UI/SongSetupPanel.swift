@@ -390,7 +390,7 @@ struct SongSetupPanel: View {
                     ForEach(sections.indices.filter { $0 >= startSection }, id: \.self) { i in Text("\(i + 1). \(sections[i].name)").tag(i) }
                 }
             }
-            SliderRow(title: "Song speed", value: $app.settings.modifiers.songSpeed, range: 0.25...1.5, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })
+            SliderRow(title: "Song speed", value: $app.settings.practiceSpeed, range: 0.25...3.0, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06)))
@@ -415,7 +415,7 @@ struct ModifiersView: View {
             NavRow(id: id, section: sec, title: title, detail: detail, kind: .toggle(b))
         }
         var r: [NavRow] = [
-            NavRow(id: "ss", section: "Speed", title: "Song speed", kind: .slider(m.songSpeed, 0.25...3.0, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })),
+            NavRow(id: "ss", section: "Speed", title: "Song speed", kind: .slider(practice && mods == nil ? $app.settings.practiceSpeed : m.songSpeed, 0.25...3.0, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })),
             NavRow(id: "ns", section: "Speed", title: "Track (note) speed", kind: .slider(noteSpeed ?? $app.settings.noteSpeed, 0.25...10, step: 0.05, format: { String(format: "%.2f×", $0) })),
             NavRow(id: "hl", section: "Speed", title: "Highway length", kind: .slider(highwayLength ?? $app.settings.highwayLength, 0.5...10, step: 0.05, format: { String(format: "%.2f×", $0) })),
         ]
@@ -465,30 +465,5 @@ struct ModifiersView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-    }
-}
-
-/// Toggle chip for one modifier.
-struct ModChip: View {
-    var title: String
-    @Binding var on: Bool
-    var warn = false
-    init(_ title: String, _ on: Binding<Bool>, warn: Bool = false) {
-        self.title = title
-        _on = on
-        self.warn = warn
-    }
-    var body: some View {
-        Button { on.toggle() } label: {
-            HStack(spacing: 4) {
-                if on { Image(systemName: "checkmark").font(.system(size: 10, weight: .black)) }
-                Text(title).font(.caption.bold()).lineLimit(1)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(Capsule().fill(on ? (warn ? Palette.yellow.opacity(0.35) : Palette.orange.opacity(0.4)) : Color.white.opacity(0.08)))
-            .overlay(Capsule().stroke(on ? (warn ? Palette.yellow : Palette.orange) : Color.white.opacity(0.15), lineWidth: 1.5))
-        }
-        .foregroundStyle(.white)
-        .buttonStyle(.plain)
     }
 }

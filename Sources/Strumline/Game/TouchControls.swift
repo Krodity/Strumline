@@ -148,7 +148,7 @@ final class TouchControlsView: UIView {
                 let dy = Double((p.y - cur.start.y) / 40)
                 input.inject(.whammy, down: true, value: max(-1, min(1, dy)), time: t.timestamp)
                 // Sliding to another fret = hammer-on/pull-off (no strum).
-                if let z = zone(at: p), z != cur.zone, case .fret = z, !fretStrum || true {
+                if let z = zone(at: p), z != cur.zone, case .fret = z {
                     release(cur.zone, time: t.timestamp)
                     touchZones[id] = (z, p)
                     if case .fret(let i) = z { input.inject(fretAction(i), down: true, time: t.timestamp) }

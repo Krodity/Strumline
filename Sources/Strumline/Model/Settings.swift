@@ -54,6 +54,9 @@ struct GameSettings: Codable, Equatable {
     var lastInstrument: Instrument = .guitar
     var lastDifficulty: Difficulty = .expert
     var modifiers = Modifiers()
+    /// Practice mode's own song speed, so slowing a section down doesn't
+    /// carry over into Quickplay (`modifiers.songSpeed`).
+    var practiceSpeed: Double = 1.0
     var sort: SongSort = .artist
 
     static let key = "settings.v1"
@@ -72,7 +75,7 @@ struct GameSettings: Codable, Equatable {
         drumMode = v(.drumMode, d.drumMode); touchMode = v(.touchMode, d.touchMode); showTouchControls = v(.showTouchControls, d.showTouchControls)
         tiltStarPower = v(.tiltStarPower, d.tiltStarPower); backgroundDim = v(.backgroundDim, d.backgroundDim); showVideos = v(.showVideos, d.showVideos)
         lastInstrument = v(.lastInstrument, d.lastInstrument); lastDifficulty = v(.lastDifficulty, d.lastDifficulty)
-        modifiers = v(.modifiers, d.modifiers); sort = v(.sort, d.sort)
+        modifiers = v(.modifiers, d.modifiers); sort = v(.sort, d.sort); practiceSpeed = v(.practiceSpeed, d.practiceSpeed)
         highwayImage = v(.highwayImage, d.highwayImage); gameBackground = v(.gameBackground, d.gameBackground)
         customBackground = v(.customBackground, d.customBackground); menuWallpaper = v(.menuWallpaper, d.menuWallpaper)
     }

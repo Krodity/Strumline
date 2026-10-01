@@ -8,6 +8,7 @@ final class PreviewPlayer {
     private var generation = 0
     private var fadeTimer: Timer?
     private(set) var current: String?
+    private var loadTask: Task<Void, Never>?
     var volume: Double = 0.6
 
     func play(_ song: SongEntry) {
@@ -16,8 +17,12 @@ final class PreviewPlayer {
         generation += 1
         let gen = generation
         stopAudio()
-        Task.detached(priority: .userInitiated) {
-            guard let pkg = try? SongLoader.package(for: song) else { return }
+        loadTask?.cancel()
+        loadTask = Task.detached(priority: .userInitiated) {
+            // Debounce: scrolling past songs (or holding ↓ on a controller)
+            // shouldn't open and decode every stem of every song it passes.
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled, let pkg = try? SongLoader.package(for: song) else { return }
             let stems = SongLoader.stems(in: pkg)
             var decs: [(StemRole, AudioDecoder)] = []
             var start = max(0, Double(song.previewStartMs) / 1000)
@@ -30,13 +35,12 @@ final class PreviewPlayer {
                 }
                 if song.previewStartMs < 0 { start = Double(song.lengthMs) / 1000 * 0.35 }
             }
-            guard !decs.isEmpty else { return }
+            guard !decs.isEmpty, !Task.isCancelled else { return }
             let decoders = decs
             let s = start
             await MainActor.run {
                 guard gen == self.generation else { return }
-                // The mixer takes ownership; start after a short debounce so
-                // fast scrolling doesn't thrash the audio engine.
+                // The mixer takes ownership of the decoders.
                 let mixer = AudioEngine.shared.load(stems: decoders)
                 mixer.setMasterGain(0)
                 mixer.seek(to: s)
@@ -73,6 +77,8 @@ final class PreviewPlayer {
     }
 
     func stop() {
+        loadTask?.cancel()
+        loadTask = nil
         generation += 1
         current = nil
         stopAudio()

@@ -243,7 +243,9 @@ public enum TrackPrep {
         return t
     }
 
-    static func fixPhraseEnds(_ t: inout TrackChart) {
+    /// After chords are removed (drum modifiers, a practice cut), make each
+    /// star power phrase end on a chord that still exists.
+    public static func fixPhraseEnds(_ t: inout TrackChart) {
         var lastOf: [Int: Int] = [:]
         for i in t.chords.indices {
             t.chords[i].spPhraseEnd = false
