@@ -289,5 +289,74 @@ do {
     if SavedState.decode(Data("[1,2]".utf8), over: Saved()) == nil { print("  ✓ Q4 non-object save rejected") } else { fail("Q4 non-object save accepted") }
 }
 
+/// Writes a song folder with `notes.chart` (+ a tiny WAV so it counts as a song).
+func makeSongFolder(_ name: String, chart: String) throws -> URL {
+    let dir = scratch.appendingPathComponent(name, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try chart.write(to: dir.appendingPathComponent("notes.chart"), atomically: true, encoding: .utf8)
+    func le(_ v: Int, _ n: Int) -> [UInt8] { (0..<n).map { UInt8(truncatingIfNeeded: v >> (8 * $0)) } }
+    let pcm = [UInt8](repeating: 0, count: 400)
+    let fmt = Array("fmt ".utf8) + le(16, 4) + le(1, 2) + le(1, 2) + le(44100, 4) + le(88200, 4) + le(2, 2) + le(16, 2)
+    let body = Array("WAVE".utf8) + fmt + Array("data".utf8) + le(pcm.count, 4) + pcm
+    try Data(Array("RIFF".utf8) + le(body.count, 4) + body).write(to: dir.appendingPathComponent("song.wav"))
+    return dir
+}
+func chartText(ts: String = "4", notes: String) -> String {
+    "[Song]\n{\n  Resolution = 192\n}\n[SyncTrack]\n{\n  0 = TS \(ts)\n  0 = B 120000\n}\n[Events]\n{\n}\n[ExpertSingle]\n{\n\(notes)\n}\n"
+}
+
+// B13: a full star power meter lasts 8 measures, so 7/4 drains faster than 4/4.
+do {
+    func spSeconds(ts: String) throws -> Double {
+        // Two one-note phrases fill the meter to 0.5 (4 measures).
+        let dir = try makeSongFolder("sp-\(ts.replacingOccurrences(of: " ", with: "-"))", chart: chartText(ts: ts, notes: "  192 = N 0 0\n  192 = S 2 1\n  384 = N 0 0\n  384 = S 2 1"))
+        let song = try SongLoader.loadChart(pkg: try FolderPackage(url: dir), file: "notes.chart", ini: IniFile())
+        guard let tr = song.track(.guitar, .expert) else { throw ChartError.invalid("no track") }
+        let eng = PlayEngine(track: tr, tempo: song.tempo, sections: [], config: EngineConfig(), drumMode: .fourLanePro)
+        eng.handle(.fret(lane: 0, down: true), at: 0.3)
+        for c in tr.chords { eng.handle(.strum, at: c.time) }
+        let start = 2.0
+        eng.handle(.starPower, at: start)
+        var t = start
+        while eng.spActive && t < start + 60 { t += 0.005; eng.advance(to: t) }
+        return t - start
+    }
+    let four = try spSeconds(ts: "4"), seven = try spSeconds(ts: "7")
+    // 120 BPM: 4 measures of 4/4 = 16 beats = 8 s; of 7/4 = 28 beats = 14 s.
+    let line = "B13 half-meter SP lasts \(String(format: "%.2f", four)) s in 4/4, \(String(format: "%.2f", seven)) s in 7/4 (want 8, 14)"
+    if abs(four - 8) < 0.05 && abs(seven - 14) < 0.05 { print("  ✓ " + line) } else { fail(line) }
+} catch { fail("B13 setup: \(error)") }
+
+// B11: anchoring (lower frets held under a HOPO) isn't ghosting, so No
+// Ghosting doesn't block the HOPO.
+do {
+    // Red strum at 2.0 s, then a natural HOPO on blue 50 ticks later.
+    let dir = try makeSongFolder("anchor", chart: chartText(notes: "  768 = N 1 0\n  818 = N 3 0"))
+    let song = try SongLoader.loadChart(pkg: try FolderPackage(url: dir), file: "notes.chart", ini: IniFile())
+    guard let tr = song.track(.guitar, .expert), tr.chords.count == 2, tr.chords[1].kind == .hopo else { throw ChartError.invalid("expected strum then HOPO") }
+    var mods = Modifiers(); mods.noGhosting = true
+    let eng = PlayEngine(track: tr, tempo: song.tempo, sections: [], config: EngineConfig(), drumMode: .fourLanePro, modifiers: mods)
+    eng.handle(.fret(lane: 1, down: true), at: 1.98)
+    eng.handle(.strum, at: 2.0)
+    eng.handle(.fret(lane: 0, down: true), at: 2.05)   // anchor green
+    eng.handle(.fret(lane: 2, down: true), at: 2.07)   // anchor yellow
+    eng.handle(.fret(lane: 3, down: true), at: tr.chords[1].time)  // hammer on blue
+    eng.advance(to: 3)
+    let line = "B11 anchored HOPO with No Ghosting: \(eng.notesHit)/2 hit"
+    if eng.notesHit == 2 { print("  ✓ " + line) } else { fail(line) }
+} catch { fail("B11 setup: \(error)") }
+
+// B14: .chart metadata is read from the first 8 KB; a cut inside a UTF-8
+// character must not turn the whole sample into CP1252 mojibake.
+do {
+    let pre = "[Song]\n{\n  Name = \"Café\"\n  Album = \""
+    let pad = String(repeating: "x", count: 8191 - pre.utf8.count)  // "é" starts at byte 8191
+    let chart = pre + pad + "éé\"\n  Resolution = 192\n}\n[SyncTrack]\n{\n  0 = TS 4\n  0 = B 120000\n}\n[Events]\n{\n}\n[ExpertSingle]\n{\n  768 = N 0 0\n}\n"
+    let dir = try makeSongFolder("mojibake", chart: chart)
+    let e = try SongLoader.makeEntry(pkg: try FolderPackage(url: dir), path: dir.path, kind: .folder, modified: 0, folderName: "mojibake")
+    let line = "B14 .chart name with an 8 KB cut inside UTF-8: \"\(e.name)\""
+    if e.name == "Café" { print("  ✓ " + line) } else { fail(line) }
+} catch { fail("B14 setup: \(error)") }
+
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) FAILURE(S)")
 exit(failures == 0 ? 0 : 1)

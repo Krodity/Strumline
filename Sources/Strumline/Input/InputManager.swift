@@ -201,18 +201,33 @@ final class InputManager: ObservableObject, @unchecked Sendable {
     private func attach(_ k: GCKeyboard) {
         k.handlerQueue = queue
         k.keyboardInput?.keyChangedHandler = { [weak self] _, _, code, pressed in
-            self?.keyEvent(code.rawValue, down: pressed, time: CACurrentMediaTime())
+            self?.keyEvent(code.rawValue, down: pressed, time: CACurrentMediaTime(), source: .gameController)
         }
     }
 
     /// Hardware keys arrive both through GCKeyboard and through UIKit's
-    /// responder chain (KeyCatcher); whichever is first wins, the repeat is
-    /// dropped.
+    /// responder chain (KeyCatcher). An event the *other* path already
+    /// delivered (same key, same direction, within 40 ms) is its twin and is
+    /// dropped. Matching on time rather than "is the key down" means a twin
+    /// that lags past a quick release can't come back as a second press
+    /// (a double strum).
+    enum KeySource { case gameController, uikit }
+    private struct KeyEdge: Hashable { var code: Int; var down: Bool; var gc: Bool }
+    private var lastEdge: [KeyEdge: Double] = [:]
     private var keyDown = Set<Int>()
     private let keyLock = NSLock()
 
-    func keyEvent(_ code: Int, down: Bool, time: Double) {
+    func keyEvent(_ code: Int, down: Bool, time: Double, source: KeySource) {
+        let mine = KeyEdge(code: code, down: down, gc: source == .gameController)
+        var other = mine
+        other.gc.toggle()
         keyLock.lock()
+        if let t = lastEdge[other], abs(time - t) < 0.04 {
+            lastEdge[other] = nil  // consumed: a later real press isn't mistaken for it
+            keyLock.unlock()
+            return
+        }
+        lastEdge[mine] = time
         let changed = down ? keyDown.insert(code).inserted : keyDown.remove(code) != nil
         keyLock.unlock()
         if changed { dispatch(.key(code), down: down, time: time, device: InputDevice.keyboardID) }

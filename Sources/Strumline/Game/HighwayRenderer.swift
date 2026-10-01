@@ -294,9 +294,11 @@ struct HighwayRenderer {
         // First chord still relevant (sustains may reach back further).
         var lo = 0, hi = chords.count
         while lo < hi { let m = (lo + hi) / 2; if chords[m].time < t - 0.25 { lo = m + 1 } else { hi = m } }
+        // Earlier chords whose sustains still reach the screen: no chord
+        // starting more than the longest sustain ago can.
         var start = lo
         var j = lo - 1
-        while j >= 0 && lo - j <= 64 {
+        while j >= 0 && chords[j].time >= t - 0.25 - run.longestSustain {
             if chords[j].sustainEndTime > t { start = j }
             j -= 1
         }

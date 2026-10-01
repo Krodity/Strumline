@@ -12,9 +12,12 @@ public final class StemMixer: @unchecked Sendable {
         let decoder: AudioDecoder
         let capacity: Int  // frames, power of two
         let ring: UnsafeMutablePointer<Float>  // stereo interleaved
-        var written: Int64 = 0  // atomic, frames
-        var consumed: Int64 = 0  // atomic, frames
-        var gain: Double = 1  // atomic target gain
+        // Shared with the audio thread through the C atomics, so they live in
+        // memory with a fixed address (an inout `&property` isn't guaranteed
+        // to be one).
+        let written = UnsafeMutablePointer<Int64>.allocate(capacity: 1)  // frames
+        let consumed = UnsafeMutablePointer<Int64>.allocate(capacity: 1)  // frames
+        let gain = UnsafeMutablePointer<Double>.allocate(capacity: 1)  // target gain
         var current: Float = 1  // audio thread only
         /// Frames the song clock moved past while this stem's ring was empty
         /// (an underrun); dropped from the ring once they arrive so the stem
@@ -39,12 +42,20 @@ public final class StemMixer: @unchecked Sendable {
             ring.initialize(repeating: 0, count: capacity * 2)
             step = decoder.sampleRate / outRate
             decodeBuf = [Float](repeating: 0, count: 4096 * max(1, decoder.channels))
+            written.initialize(to: 0)
+            consumed.initialize(to: 0)
+            gain.initialize(to: 1)
         }
-        deinit { ring.deallocate() }
+        deinit {
+            ring.deallocate()
+            written.deallocate()
+            consumed.deallocate()
+            gain.deallocate()
+        }
 
         func reset() {
-            sl_store64(&written, 0)
-            sl_store64(&consumed, 0)
+            sl_store64(written, 0)
+            sl_store64(consumed, 0)
             frac = 0
             histFill = 0
             tail = 0
@@ -77,7 +88,7 @@ public final class StemMixer: @unchecked Sendable {
         /// Fills the ring as far as it will go. Returns frames produced.
         func fill(maxFrames: Int) -> Int {
             if ended { return 0 }
-            let w = sl_load64(&written), c = sl_load64(&consumed)
+            let w = sl_load64(written), c = sl_load64(consumed)
             let free = capacity - Int(w - c) - 1
             let want = min(free, maxFrames)
             if want <= 0 { return 0 }
@@ -119,27 +130,36 @@ public final class StemMixer: @unchecked Sendable {
                 }
                 if ended { break }
             }
-            sl_store64(&written, w + Int64(produced))
+            sl_store64(written, w + Int64(produced))
             return produced
         }
     }
 
     public let outputRate: Double
     private let stems: [Stem]
-    private var songFrame: Int64 = 0  // atomic
+    // Atomic (see Stem): fixed-address storage for the C atomics.
+    private let songFrame = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
     private var running = false
-    private var paused: Int64 = 1  // atomic bool
+    private let paused = UnsafeMutablePointer<Int64>.allocate(capacity: 1)  // bool
     private var feederThread: Thread?
     private let wake = DispatchSemaphore(value: 0)
     private let lock = NSLock()
-    public var masterGain: Double = 1  // atomic via sl_*d
+    private let masterGain = UnsafeMutablePointer<Double>.allocate(capacity: 1)
 
     public init(outputRate: Double, stems: [(StemRole, AudioDecoder)]) {
         self.outputRate = outputRate
         self.stems = stems.map { Stem(role: $0.0, decoder: $0.1, outRate: outputRate) }
+        songFrame.initialize(to: 0)
+        paused.initialize(to: 1)
+        masterGain.initialize(to: 1)
     }
 
-    deinit { stop() }
+    deinit {
+        stop()
+        songFrame.deallocate()
+        paused.deallocate()
+        masterGain.deallocate()
+    }
 
     public var roles: [StemRole] { stems.map(\.role) }
 
@@ -149,17 +169,17 @@ public final class StemMixer: @unchecked Sendable {
     }
 
     public func setGain(_ gain: Double, for roles: Set<StemRole>) {
-        for s in stems where roles.contains(s.role) { sl_stored(&s.gain, gain) }
+        for s in stems where roles.contains(s.role) { sl_stored(s.gain, gain) }
     }
 
     public func setGain(_ gain: Double, forRole role: StemRole) {
-        for s in stems where s.role == role { sl_stored(&s.gain, gain) }
+        for s in stems where s.role == role { sl_stored(s.gain, gain) }
     }
 
-    public func setMasterGain(_ g: Double) { sl_stored(&masterGain, g) }
+    public func setMasterGain(_ g: Double) { sl_stored(masterGain, g) }
 
-    public var position: Double { Double(sl_load64(&songFrame)) / outputRate }
-    public var positionFrames: Int64 { sl_load64(&songFrame) }
+    public var position: Double { Double(sl_load64(songFrame)) / outputRate }
+    public var positionFrames: Int64 { sl_load64(songFrame) }
 
     /// Starts the feeder thread. Call once.
     public func start() {
@@ -177,14 +197,14 @@ public final class StemMixer: @unchecked Sendable {
         wake.signal()
     }
 
-    public func setPaused(_ p: Bool) { sl_store64(&paused, p ? 1 : 0); wake.signal() }
-    public var isPaused: Bool { sl_load64(&paused) != 0 }
+    public func setPaused(_ p: Bool) { sl_store64(paused, p ? 1 : 0); wake.signal() }
+    public var isPaused: Bool { sl_load64(paused) != 0 }
 
     /// Seek to a song time (may be negative). Only call while paused.
     public func seek(to time: Double) {
         lock.lock()
         let frame = Int64((time * outputRate).rounded())
-        sl_store64(&songFrame, frame)
+        sl_store64(songFrame, frame)
         for s in stems {
             s.reset()
             let srcFrame = max(0, Int(Double(max(0, frame)) * s.step))
@@ -215,25 +235,25 @@ public final class StemMixer: @unchecked Sendable {
     /// frame of the first rendered frame.
     @discardableResult
     public func render(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int) -> Int64 {
-        let start = sl_load64(&songFrame)
+        let start = sl_load64(songFrame)
         left.update(repeating: 0, count: frames)
         right.update(repeating: 0, count: frames)
-        if sl_load64(&paused) != 0 { return start }
-        let master = Float(sl_loadd(&masterGain))
+        if sl_load64(paused) != 0 { return start }
+        let master = Float(sl_loadd(masterGain))
         // Lead-in: silence until the song position reaches 0.
         let lead = start < 0 ? min(frames, Int(-start)) : 0
         for s in stems {
-            let target = Float(sl_loadd(&s.gain)) * master
+            let target = Float(sl_loadd(s.gain)) * master
             var g = s.current
-            var c = sl_load64(&s.consumed)
-            var avail = Int(sl_load64(&s.written) - c)
+            var c = sl_load64(s.consumed)
+            var avail = Int(sl_load64(s.written) - c)
             // Catch up after an underrun instead of playing late forever.
             if s.skip > 0 && avail > 0 {
                 let d = min(s.skip, avail)
                 c += Int64(d)
                 avail -= d
                 s.skip -= d
-                sl_store64(&s.consumed, c)
+                sl_store64(s.consumed, c)
             }
             let want = frames - lead
             let n = min(want, avail)
@@ -251,13 +271,13 @@ public final class StemMixer: @unchecked Sendable {
                     left[lead + i] += s.ring[idx] * g
                     right[lead + i] += s.ring[idx + 1] * g
                 }
-                sl_store64(&s.consumed, c + Int64(n))
+                sl_store64(s.consumed, c + Int64(n))
             } else {
                 g = target
             }
             s.current = g
         }
-        sl_store64(&songFrame, start + Int64(frames))
+        sl_store64(songFrame, start + Int64(frames))
         wake.signal()
         return start
     }

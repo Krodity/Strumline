@@ -55,6 +55,7 @@ final class AudioEngine: @unchecked Sendable {
         makeSfx(format: fmt)
 
         AudioDecoders.platformFactory = { pkg, name in AVFileDecoder.open(pkg: pkg, name: name) }
+        AVFileDecoder.purgeTempFiles()
 
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] _ in
             self?.restartIfNeeded()
@@ -225,18 +226,35 @@ final class AudioEngine: @unchecked Sendable {
 final class AVFileDecoder: AudioDecoder {
     private let file: AVAudioFile
     private let buffer: AVAudioPCMBuffer
+    /// Temp copy of a stem from inside a .sng; deleted with the decoder.
+    private var tempURL: URL?
+    static let tempPrefix = "strumline-stem-"
+
+    /// Clears temp stems left behind by a crash (call at launch).
+    static func purgeTempFiles() {
+        let tmp = FileManager.default.temporaryDirectory
+        for n in (try? FileManager.default.contentsOfDirectory(atPath: tmp.path)) ?? [] where n.hasPrefix(tempPrefix) {
+            try? FileManager.default.removeItem(at: tmp.appendingPathComponent(n))
+        }
+    }
     let sampleRate: Double
     let channels: Int
     let lengthFrames: Int?
 
     static func open(pkg: SongPackage, name: String) -> AudioDecoder? {
         var url = pkg.directURL(named: name)
+        var temp: URL?
         if url == nil, let d = try? pkg.data(named: name) {
-            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "-" + name)
-            if (try? d.write(to: tmp)) != nil { url = tmp }
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(tempPrefix + UUID().uuidString + "-" + name)
+            if (try? d.write(to: tmp)) != nil { url = tmp; temp = tmp }
         }
-        guard let u = url, let f = try? AVAudioFile(forReading: u, commonFormat: .pcmFormatFloat32, interleaved: false) else { return nil }
-        return AVFileDecoder(file: f)
+        guard let u = url, let f = try? AVAudioFile(forReading: u, commonFormat: .pcmFormatFloat32, interleaved: false),
+              let dec = AVFileDecoder(file: f) else {
+            if let temp { try? FileManager.default.removeItem(at: temp) }
+            return nil
+        }
+        dec.tempURL = temp
+        return dec
     }
 
     init?(file: AVAudioFile) {
@@ -247,6 +265,10 @@ final class AVFileDecoder: AudioDecoder {
         lengthFrames = Int(file.length)
         guard let b = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 4096) else { return nil }
         buffer = b
+    }
+
+    deinit {
+        if let t = tempURL { try? FileManager.default.removeItem(at: t) }
     }
 
     func read(_ out: UnsafeMutablePointer<Float>, frames: Int) -> Int {

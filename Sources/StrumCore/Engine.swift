@@ -475,7 +475,10 @@ public final class PlayEngine {
             sustains = kept
         }
         if spActive {
-            spMeter -= tempo.beats(from: a, to: b) / 32
+            // A full meter lasts 8 measures (half lasts 4), whatever the time
+            // signature: 32 beats in 4/4, 28 in 7/4, 24 in 6/8.
+            let perMeasure = tempo.beatsPerMeasure(atTick: Int(tempo.tick(at: a)))
+            spMeter -= tempo.beats(from: a, to: b) / max(0.5, perMeasure) / 8
             if spMeter <= 0 {
                 spMeter = 0
                 spActive = false
@@ -532,7 +535,7 @@ public final class PlayEngine {
             if frets != old {
                 lastFretChange = t
                 if down, let i = firstPending(inWindowAt: t + front) ?? (next < track.chords.count ? next : nil),
-                   track.chords[i].mask & (1 << UInt32(lane)) == 0 {
+                   track.chords[i].mask & (1 << UInt32(lane)) == 0, !isAnchor(lane: lane, for: track.chords[i]) {
                     ghostPresses += 1
                     if modifiers.deadlyGhosting && ghostPresses > 2 && !ghostPenalised {
                         ghostPenalised = true
@@ -582,6 +585,12 @@ public final class PlayEngine {
             i += 1
         }
         return nil
+    }
+
+    /// Holding a lower fret under a single note is anchoring, not ghosting.
+    private func isAnchor(lane: Int, for c: Chord) -> Bool {
+        guard !sixFret, c.gems.count == 1, c.gems[0].lane != openLane else { return false }
+        return lane < c.gems[0].lane
     }
 
     private func matches(_ c: Chord) -> Bool {

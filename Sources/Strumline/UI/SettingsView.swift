@@ -202,11 +202,14 @@ struct CalibrationView: View {
             Text("Tap the pad in time with the clicks. Uses your current headphones or speaker, so calibrate with the ones you play on.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
             ZStack {
-                Circle().fill(running ? Palette.orange.opacity(0.8) : Color.white.opacity(0.15))
-                Text(running ? "TAP" : "Tap to start").font(.title.bold())
+                Circle().fill(running ? Theme.accent.opacity(0.8) : finished ? Palette.green.opacity(0.35) : Theme.Surface.control)
+                Text(running ? "TAP" : finished ? "Done" : "Tap to start").font(.title.bold())
                 TapPad { host in tap(host) }
             }
             .frame(width: 200, height: 200)
+            if finished {
+                Button("Again") { begin() }.font(.subheadline.bold())
+            }
             Text(taps.isEmpty ? " " : "\(taps.count) taps · \(Int(average * 1000)) ms").monospacedDigit()
             HStack {
                 Button("Cancel") { stop(); dismiss() }
@@ -229,7 +232,12 @@ struct CalibrationView: View {
         return s[s.count / 2]
     }
 
+    /// A run finished: further taps on the pad are ignored (so a stray tap
+    /// can't wipe the result before Apply); "Again" starts over.
+    private var finished: Bool { !running && taps.count >= 18 }
+
     private func tap(_ host: Double) {
+        if finished { return }
         if !running { begin(); return }
         // Clicks are rendered at startHost + n·interval and heard after the
         // latency iOS reports; the remainder is what the offset corrects.

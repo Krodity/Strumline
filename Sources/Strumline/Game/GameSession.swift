@@ -59,6 +59,9 @@ final class PlayerRun {
     var playerStems: Set<StemRole> { stemsOverride ?? stems }
     /// Custom highway image, resolved once (the renderer runs every frame).
     let highwayImageURL: URL?
+    /// Longest sustain in the track (seconds): how far back the renderer
+    /// looks for a sustain that's still on screen.
+    let longestSustain: Double
 
     init(index: Int, setup: PlayerSetup, chart: SongChart, practice: PracticeRange?, loop: (Double, Double)) throws {
         self.index = index
@@ -87,6 +90,7 @@ final class PlayerRun {
         baseScore = engine.baseScore
         stems = Set(inst.stems)
         highwayImageURL = CustomAssets.highwayURL(setup.settings.highwayImage)
+        longestSustain = prepared.chords.reduce(0) { max($0, $1.sustainEndTime - $1.time) }
     }
 
     func resetEngine(chart: SongChart) {

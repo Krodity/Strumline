@@ -64,7 +64,8 @@ final class TouchControlsView: UIView {
             let w = fretsW / 3
             for row in 0..<2 {
                 for c in 0..<3 {
-                    rects.append(CGRect(x: CGFloat(c) * w + 3, y: top + CGFloat(row) * h / 2 + 3, width: w - 6, height: h / 2 - 6))
+                    let col = settings.leftyFlip ? 2 - c : c
+                    rects.append(CGRect(x: CGFloat(col) * w + 3, y: top + CGFloat(row) * h / 2 + 3, width: w - 6, height: h / 2 - 6))
                 }
             }
         } else {

@@ -46,13 +46,13 @@ struct KeyCatcher: UIViewRepresentable {
         override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
             var unhandled = Set<UIPress>()
             for p in presses {
-                if let k = p.key { InputManager.shared.keyEvent(k.keyCode.rawValue, down: true, time: p.timestamp) } else { unhandled.insert(p) }
+                if let k = p.key { InputManager.shared.keyEvent(k.keyCode.rawValue, down: true, time: p.timestamp, source: .uikit) } else { unhandled.insert(p) }
             }
             if !unhandled.isEmpty { super.pressesBegan(unhandled, with: event) }
         }
 
         override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-            for p in presses { if let k = p.key { InputManager.shared.keyEvent(k.keyCode.rawValue, down: false, time: p.timestamp) } }
+            for p in presses { if let k = p.key { InputManager.shared.keyEvent(k.keyCode.rawValue, down: false, time: p.timestamp, source: .uikit) } }
             super.pressesEnded(presses.filter { $0.key == nil }, with: event)
         }
 

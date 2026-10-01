@@ -128,7 +128,12 @@ public enum SongLoader {
     }
 
     static func chartSongField(_ data: Data, _ key: String) -> String? {
-        let text = TextDecoding.decode(data.prefix(8192))
+        // Only the start of the file is needed, but cutting mid-character
+        // would fail UTF-8 and fall back to CP1252 (mojibake): end the sample
+        // at its last full line.
+        var head = data.prefix(8192)
+        if head.count < data.count, let nl = head.lastIndex(of: 0x0A) { head = head[..<nl] }
+        let text = TextDecoding.decode(head)
         guard let r = text.range(of: "[Song]") else { return nil }
         for line in text[r.upperBound...].split(whereSeparator: \.isNewline) {
             let l = line.trimmingCharacters(in: .whitespaces)
@@ -260,17 +265,17 @@ public enum LibraryScanner {
         }
         func visitSng(_ u: URL) {
             let n = u.lastPathComponent
-                    let p = u.standardizedFileURL.path
-                    guard seen.insert(p).inserted else { return }
-                    let m = (try? fm.attributesOfItem(atPath: p)[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-                    if let c = cache[p], c.modified == m { add(c); return }
-                    do {
-                        let e = try SongLoader.makeEntry(pkg: SngPackage(url: u), path: p, kind: .sng, modified: m, folderName: (n as NSString).deletingPathExtension)
-                        add(e)
-                    } catch {
-                        errors.append("\(n): \(error)")
-                    }
-                    progress?(songs.count, n)
+            let p = u.standardizedFileURL.path
+            guard seen.insert(p).inserted else { return }
+            let m = (try? fm.attributesOfItem(atPath: p)[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            if let c = cache[p], c.modified == m { add(c); return }
+            do {
+                let e = try SongLoader.makeEntry(pkg: SngPackage(url: u), path: p, kind: .sng, modified: m, folderName: (n as NSString).deletingPathExtension)
+                add(e)
+            } catch {
+                errors.append("\(n): \(error)")
+            }
+            progress?(songs.count, n)
         }
         for r in roots {
             if r.pathExtension.lowercased() == "sng" { visitSng(r) } else { visit(r, depth: 0) }
