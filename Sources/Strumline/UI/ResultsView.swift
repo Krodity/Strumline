@@ -58,8 +58,9 @@ struct ResultsView: View {
         }
         .menuNavigation { nav in
             switch nav {
-            case .left, .up, .right, .down: choice = 1 - choice
-            case .confirm: if choice == 0 { app.restartCurrent() } else { app.screen = .songs(practice: false) }
+            case .right, .down: choice = (choice + 1) % choiceCount
+            case .left, .up: choice = (choice + choiceCount - 1) % choiceCount
+            case .confirm: choose(choice)
             case .back: app.screen = .songs(practice: false)
             case .pageDown: turnPage(1)
             case .pageUp: turnPage(-1)
@@ -120,20 +121,44 @@ struct ResultsView: View {
         }
     }
 
+    /// The section to work on: lowest accuracy, if anything was missed.
+    private func weakest(_ r: GameResult) -> SectionStat? {
+        let missed = r.stats.sections.filter { $0.accuracy < 1 }
+        return missed.min { $0.accuracy < $1.accuracy }
+    }
+
+    private func best(_ r: GameResult) -> SectionStat? {
+        r.stats.sections.max { $0.accuracy < $1.accuracy }
+    }
+
     @ViewBuilder private func sectionsBlock(_ r: GameResult) -> some View {
         if r.stats.sections.count > 1 {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Sections").font(.headline)
+            let weak = weakest(r), top = best(r)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Sections").font(Theme.Fonts.heading)
+                // The two that matter, before the full list.
+                if let weak, let top, top.accuracy > weak.accuracy {
+                    (Text("Best: ").foregroundStyle(.secondary) + Text(top.name).foregroundStyle(Palette.green)
+                        + Text("  ·  Weakest: ").foregroundStyle(.secondary) + Text("\(weak.name), \(Int(weak.accuracy * 100))%").foregroundStyle(Palette.red))
+                        .font(.caption.weight(.semibold))
+                        .padding(.bottom, 2)
+                }
                 ForEach(Array(r.stats.sections.enumerated()), id: \.offset) { i, s in
-                    HStack {
+                    let pct = s.accuracy
+                    let isWeak = weak.map { $0.name == s.name && $0.index == s.index } ?? false
+                    let isBest = !isWeak && weak != nil && top.map { $0.name == s.name && $0.index == s.index } ?? false
+                    HStack(spacing: 8) {
                         Text(s.name).lineLimit(1)
+                        if isWeak { Text("Weakest").font(.caption2.bold()).foregroundStyle(Palette.red) }
+                        if isBest { Text("Best").font(.caption2.bold()).foregroundStyle(Palette.green) }
                         Spacer()
-                        let pct = s.total > 0 ? Double(s.hit) / Double(s.total) : 0
                         Text("\(Int(pct * 100))%").monospacedDigit()
                             .foregroundStyle(pct >= 1 ? Palette.yellow : pct >= 0.9 ? Palette.green : pct >= 0.7 ? .white : Palette.red)
-                        ProgressView(value: pct).frame(width: 70).tint(pct >= 1 ? Palette.yellow : Palette.green)
+                        ProgressView(value: pct).frame(width: 70).tint(pct >= 1 ? Palette.yellow : pct >= 0.7 ? Palette.green : Palette.red)
                     }
                     .font(.subheadline)
+                    .padding(.vertical, 2).padding(.horizontal, 6)
+                    .background(RoundedRectangle(cornerRadius: Theme.Radius.small).fill(isWeak ? Palette.red.opacity(0.15) : .clear))
                     .id(i % 6 == 0 ? "sec\(i)" : "row\(i)")
                 }
             }
@@ -142,12 +167,42 @@ struct ResultsView: View {
         }
     }
 
+    /// Practice target offered after a single-player run (a real chart
+    /// section the player missed notes in).
+    private var practiceTarget: SectionStat? {
+        guard app.lastResults.count <= 1, let r = app.lastResult, let w = weakest(r), w.index >= 0 else { return nil }
+        return w
+    }
+
+    /// Controller choices, in order: Retry, Continue, then Practice if offered.
+    private var choiceCount: Int { practiceTarget == nil ? 2 : 3 }
+
+    private func choose(_ i: Int) {
+        switch i {
+        case 0: app.restartCurrent()
+        case 2: practiceWeakest()
+        default: app.screen = .songs(practice: false)
+        }
+    }
+
+    private func practiceWeakest() {
+        guard let w = practiceTarget, let r = app.lastResult else { return }
+        app.play(song: r.song, instrument: r.instrument, difficulty: r.difficulty,
+                 practice: PracticeRange(startSection: w.index, endSection: w.index))
+    }
+
     private var buttons: some View {
-        HStack(spacing: 12) {
-            MenuButton(title: "Retry", systemImage: "arrow.counterclockwise") { app.restartCurrent() }
-                .focusRing(choice == 0)
-            MenuButton(title: "Continue", systemImage: "chevron.right") { app.screen = .songs(practice: false) }
-                .focusRing(choice == 1)
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                MenuButton(title: "Retry", systemImage: "arrow.counterclockwise") { choose(0) }
+                    .focusRing(choice == 0)
+                MenuButton(title: "Continue", systemImage: "chevron.right") { choose(1) }
+                    .focusRing(choice == 1)
+            }
+            if let w = practiceTarget {
+                MenuButton(title: "Practice \(w.name)", systemImage: "metronome.fill") { choose(2) }
+                    .focusRing(choice == 2)
+            }
         }
     }
 

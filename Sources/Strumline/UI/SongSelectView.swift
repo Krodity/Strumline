@@ -241,18 +241,35 @@ struct SongRow: View {
                     .font(.subheadline).lineLimit(1)
             }
             Spacer(minLength: 4)
-            VStack(alignment: .trailing, spacing: 3) {
+            // Two lines to match the left side: how you did (or how hard your
+            // part is), then which parts the song has and its length.
+            VStack(alignment: .trailing, spacing: 5) {
                 if let best = bestRecord {
-                    StarsView(stars: best.stars, size: 10)
-                    Text("\(best.score)").font(.caption2.monospacedDigit()).foregroundStyle(best.fullCombo ? Palette.yellow : .secondary)
+                    HStack(spacing: 5) {
+                        StarsView(stars: best.stars, size: 9)
+                        Text("\(best.score)").font(.caption2.monospacedDigit()).foregroundStyle(best.fullCombo ? Palette.yellow : .secondary)
+                    }
+                } else if song.instruments.contains(app.settings.lastInstrument) {
+                    IntensityDots(value: song.intensity(app.settings.lastInstrument))
                 }
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
+                    ForEach(partSymbols, id: \.self) { sym in
+                        Image(systemName: sym).font(.system(size: 10))
+                            .foregroundStyle(sym == app.settings.lastInstrument.symbol && song.instruments.contains(app.settings.lastInstrument) ? Theme.accent : Color.secondary.opacity(0.6))
+                    }
                     if song.kind == .sng { Image(systemName: "shippingbox.fill").font(.system(size: 9)).foregroundStyle(.tertiary) }
                     Text(formatLength(song.lengthMs)).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
                 }
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// One icon per kind of part charted (guitar, bass, keys, drums, 6-fret).
+    private var partSymbols: [String] {
+        var out: [String] = []
+        for i in song.instruments where !out.contains(i.symbol) { out.append(i.symbol) }
+        return out
     }
 
     private var bestRecord: ScoreRecord? {

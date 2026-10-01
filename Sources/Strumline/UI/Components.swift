@@ -80,7 +80,7 @@ extension Instrument {
     var symbol: String {
         switch kind {
         case .drums: return "circle.grid.2x2.fill"
-        case .sixFret: return "guitars"
+        case .sixFret: return "square.grid.3x2.fill"  // the 3×2 button layout
         case .fiveFret: return self == .keys ? "pianokeys" : self == .bass ? "guitars.fill" : "guitars"
         }
     }

@@ -42,6 +42,10 @@ public struct SectionStat: Sendable, Codable {
     public var name: String
     public var hit: Int
     public var total: Int
+    /// Index into the chart's sections (for practising it), or -1 when the
+    /// chart has none and the whole song is one "section".
+    public var index: Int = -1
+    public var accuracy: Double { total > 0 ? Double(hit) / Double(total) : 0 }
 }
 
 public struct PlayStats: Sendable, Codable {
@@ -366,6 +370,7 @@ public final class PlayEngine {
     private var sectionHit: [Int]
     private var sectionTotal: [Int]
     private let sectionNames: [String]
+    private let hasSections: Bool
     private var events: [JudgeEvent] = []
     private var sustainScoreBank: Double = 0
 
@@ -425,6 +430,7 @@ public final class PlayEngine {
             idx[i] = sections.isEmpty ? 0 : s
         }
         sectionNames = names
+        hasSections = !sections.isEmpty
         sectionIndex = idx
         sectionHit = Array(repeating: 0, count: names.count)
         sectionTotal = Array(repeating: 0, count: names.count)
@@ -830,7 +836,7 @@ public final class PlayEngine {
         s.spPhrasesTotal = track.starPower.count
         s.stars = stars(base: base)
         s.sections = sectionNames.indices.compactMap { i in
-            sectionTotal[i] > 0 ? SectionStat(name: sectionNames[i], hit: sectionHit[i], total: sectionTotal[i]) : nil
+            sectionTotal[i] > 0 ? SectionStat(name: sectionNames[i], hit: sectionHit[i], total: sectionTotal[i], index: hasSections ? i : -1) : nil
         }
         return s
     }
