@@ -9,6 +9,8 @@ struct SongSelectView: View {
     @State private var showSetup = false
     /// Split layout (iPad): the setup panel has controller focus.
     @State private var panelFocused = false
+    /// The current selection came from a tap (don't auto-scroll to it).
+    @State private var touchSelected = false
     /// Play requested from the setup sheet; runs when the sheet is gone.
     @State private var playAfterSheet: (() -> Void)?
 
@@ -159,10 +161,15 @@ struct SongSelectView: View {
                 ForEach(groups(list), id: \.0) { title, songs in
                     Section {
                         ForEach(songs) { s in
-                            SongRow(song: s, selected: selected?.path == s.path)
+                            // Art: highlight + preview only. Rest of the row: open setup.
+                            SongRow(song: s, selected: selected?.path == s.path, onArtTap: {
+                                touchSelected = true
+                                selected = s
+                            })
                                 .id(s.path)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
+                                    touchSelected = true
                                     selected = s
                                     showSetup = true
                                 }
@@ -177,6 +184,9 @@ struct SongSelectView: View {
             .scrollContentBackground(.hidden)
             .refreshable { app.rescan() }
             .onChange(of: selected) { _, s in
+                // A tapped row is already under the finger; only controller /
+                // keyboard moves scroll the selection into the middle.
+                if touchSelected { touchSelected = false; return }
                 if let s { withAnimation { proxy.scrollTo(s.path, anchor: .center) } }
             }
         }
@@ -202,10 +212,27 @@ struct SongRow: View {
     @EnvironmentObject var app: AppModel
     var song: SongEntry
     var selected: Bool
+    /// Tapping the art previews the song without opening its setup.
+    var onArtTap: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 12) {
             AlbumArt(song: song, size: 48)
+                .overlay(alignment: .bottomTrailing) {
+                    // The highlighted song is the one previewing.
+                    if selected {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(4)
+                            .background(Circle().fill(Theme.accent))
+                            .offset(x: 4, y: 4)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onArtTap)
+                .accessibilityLabel("Preview \(song.name)")
+                .accessibilityAddTraits(.isButton)
             // Always two lines, so every row is the same height.
             VStack(alignment: .leading, spacing: 3) {
                 Text(song.name).font(Theme.Fonts.heading).lineLimit(1)
