@@ -358,5 +358,78 @@ do {
     if e.name == "Café" { print("  ✓ " + line) } else { fail(line) }
 } catch { fail("B14 setup: \(error)") }
 
+// Q10: scripted (non-perfect) play, the situations a bot run never hits.
+func scripted(_ name: String, _ notes: String) throws -> (TrackChart, SongChart) {
+    let dir = try makeSongFolder("q10-" + name, chart: chartText(notes: notes))
+    let song = try SongLoader.loadChart(pkg: try FolderPackage(url: dir), file: "notes.chart", ini: IniFile())
+    guard let tr = song.track(.guitar, .expert) else { throw ChartError.invalid("no track") }
+    return (tr, song)
+}
+func check(_ ok: Bool, _ line: String) { if ok { print("  ✓ " + line) } else { fail(line) } }
+do {
+    // Overstrum: strumming with no note near breaks the combo.
+    var (tr, song) = try scripted("over", "  768 = N 0 0\n  1536 = N 0 0")
+    var eng = PlayEngine(track: tr, tempo: song.tempo, sections: [], config: EngineConfig(), drumMode: .fourLanePro)
+    eng.handle(.fret(lane: 0, down: true), at: 1.9)
+    eng.handle(.strum, at: tr.chords[0].time)
+    let comboBefore = eng.combo
+    eng.handle(.strum, at: tr.chords[0].time + 0.8)  // nothing there
+    eng.advance(to: tr.chords[0].time + 0.9)
+    check(comboBefore == 1 && eng.combo == 0 && eng.overstrums == 1, "Q10 overstrum: combo \(comboBefore) → \(eng.combo), overstrums \(eng.overstrums)")
+
+    // A HOPO right after a missed note can't be hammered; it needs a strum.
+    (tr, song) = try scripted("hopo-after-miss", "  768 = N 1 0\n  818 = N 3 0")
+    eng = PlayEngine(track: tr, tempo: song.tempo, sections: [], config: EngineConfig(), drumMode: .fourLanePro)
+    let hopo = tr.chords[1]
+    eng.handle(.fret(lane: 3, down: true), at: hopo.time - 0.01)   // fret only: first note missed
+    eng.advance(to: hopo.time + 0.01)
+    let hammered = eng.notesHit
+    eng.handle(.strum, at: hopo.time + 0.02)
+    eng.advance(to: 3)
+    check(hopo.kind == .hopo && hammered == 0 && eng.notesHit == 1, "Q10 HOPO after a miss: fretting alone hit \(hammered), with a strum \(eng.notesHit)/1")
+
+    // Letting go of a sustain early ends it and scores less than holding it.
+    (tr, song) = try scripted("sustain", "  768 = N 2 768")
+    func sustainScore(releaseAfter: Double?) -> (Int, Int) {
+        let e = PlayEngine(track: tr, tempo: song.tempo, sections: [], config: EngineConfig(), drumMode: .fourLanePro)
+        let c = tr.chords[0]
+        e.handle(.fret(lane: 2, down: true), at: c.time - 0.02)
+        e.handle(.strum, at: c.time)
+        if let r = releaseAfter { e.handle(.fret(lane: 2, down: false), at: c.time + r) }
+        e.advance(to: c.time + 0.5)
+        let active = e.sustains.count
+        e.advance(to: c.sustainEndTime + 0.5)
+        return (e.score, active)
+    }
+    let held = sustainScore(releaseAfter: nil), dropped = sustainScore(releaseAfter: 0.3)
+    check(held.0 > dropped.0 && held.1 == 1 && dropped.1 == 0, "Q10 sustain: held \(held.0) pts, released early \(dropped.0) pts (sustain dropped: \(dropped.1 == 0))")
+
+    // Solo: +100 per note hit in it.
+    func soloScore(_ notes: String, name: String) throws -> Int {
+        let (t, s) = try scripted(name, notes)
+        let e = PlayEngine(track: t, tempo: s.tempo, sections: [], config: EngineConfig(), drumMode: .fourLanePro)
+        e.handle(.fret(lane: 0, down: true), at: 1)
+        for c in t.chords { e.handle(.strum, at: c.time) }
+        e.advance(to: 5)
+        return e.score
+    }
+    let plain = try soloScore("  768 = N 0 0\n  960 = N 0 0", name: "nosolo")
+    let solo = try soloScore("  700 = E solo\n  768 = N 0 0\n  960 = N 0 0\n  1000 = E soloend", name: "solo")
+    check(solo - plain == 200, "Q10 solo bonus: \(solo - plain) for 2 notes (want 200)")
+
+    // Star power doubles the multiplier.
+    (tr, song) = try scripted("sp-mult", "  192 = N 0 0\n  192 = S 2 1\n  384 = N 0 0\n  384 = S 2 1\n  1536 = N 0 0")
+    eng = PlayEngine(track: tr, tempo: song.tempo, sections: [], config: EngineConfig(), drumMode: .fourLanePro)
+    eng.handle(.fret(lane: 0, down: true), at: 0.3)
+    eng.handle(.strum, at: tr.chords[0].time)
+    eng.handle(.strum, at: tr.chords[1].time)
+    let before = eng.multiplier
+    eng.handle(.starPower, at: tr.chords[1].time + 0.3)
+    let during = eng.multiplier
+    let scoreBefore = eng.score
+    eng.handle(.strum, at: tr.chords[2].time)
+    check(eng.spActive && during == before * 2 && eng.score - scoreBefore == 50 * during, "Q10 star power: multiplier \(before) → \(during), last note +\(eng.score - scoreBefore)")
+} catch { fail("Q10 setup: \(error)") }
+
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) FAILURE(S)")
 exit(failures == 0 ? 0 : 1)
