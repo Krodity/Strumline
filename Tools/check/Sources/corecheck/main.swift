@@ -431,5 +431,126 @@ do {
     check(eng.spActive && during == before * 2 && eng.score - scoreBefore == 50 * during, "Q10 star power: multiplier \(before) → \(during), last note +\(eng.score - scoreBefore)")
 } catch { fail("Q10 setup: \(error)") }
 
+// F1: online protocol — framing survives arbitrary packet splits, rejects
+// junk; clock sync recovers the host offset despite uneven delays.
+do {
+    var stats = PlayStats(); stats.score = 12345; stats.notesHit = 99; stats.notesTotal = 100
+    stats.sections = [SectionStat(name: "Solo", hit: 9, total: 10, index: 3)]
+    let msgs: [NetMessage] = [
+        .hello(version: Net.protocolVersion, player: NetPlayer(id: "g1", name: "Ant ✓", instrument: .drums, difficulty: .hard)),
+        .ping(t0: 1.25), .pong(t0: 1.25, hostTime: 99.5),
+        .pick(NetSong(chartHash: "abc123", name: "Strumline Demo", artist: "Strumline", lengthMs: 86000)),
+        .start(chartHash: "abc123", hostTime: 105.0, speed: 1.0),
+        .progress(NetScore(playerID: "g1", score: 500, combo: 10, notesHit: 10, notesTotal: 100, spActive: true)),
+        .finished(playerID: "g1", stats: stats), .leave,
+    ]
+    let stream = msgs.reduce(Data()) { $0 + NetFramer.encode($1) }
+    var ok = true
+    for chunk in [1, 3, 7, 64, stream.count] {
+        var f = NetFramer(); var got: [NetMessage] = []
+        var i = 0
+        while i < stream.count { got += try f.append(stream.subdata(in: i..<min(stream.count, i + chunk))); i += chunk }
+        if got != msgs { ok = false; fail("F1 framing (chunks of \(chunk)): got \(got.count)/\(msgs.count)") }
+    }
+    if ok { print("  ✓ F1 framing: \(msgs.count) messages round-trip through 1/3/7/64-byte and whole splits") }
+    var big = NetFramer()
+    let tooBig = (try? big.append(Data([0x7F, 0, 0, 0]))) == nil
+    var junk = NetFramer()
+    let notJSON = (try? junk.append(Data([0, 0, 0, 3, 0x41, 0x42, 0x43]))) == nil
+    check(tooBig && notJSON, "F1 framing rejects an oversized frame (\(tooBig)) and a non-message (\(notJSON))")
+
+    // Host clock = local + 37.25 s; one-way delays vary 5–80 ms, asymmetric.
+    var sync = ClockSync()
+    var rng = SplitMixTest(seed: 7)
+    var local = 1000.0
+    for _ in 0..<20 {
+        let up = 0.005 + rng.next() * 0.075, down = 0.005 + rng.next() * 0.075
+        let t0 = local
+        let hostTime = t0 + up + 37.25
+        let t2 = t0 + up + down
+        sync.add(t0: t0, hostTime: hostTime, t2: t2)
+        local += 0.2
+    }
+    let err = abs((sync.offset ?? 0) - 37.25)
+    check(sync.isReady && err <= (sync.bestRTT ?? 1) / 2 + 1e-9 && err < 0.03, "F1 clock sync: offset error \(String(format: "%.1f", err * 1000)) ms (best RTT \(String(format: "%.0f", (sync.bestRTT ?? 0) * 1000)) ms)")
+} catch { fail("F1 protocol: \(error)") }
+
+// F1: a whole online session in memory — host + 2 guests with clocks off by
+// +5.0 s and −3.2 s and 10–40 ms random delays: join, clock sync, pick (one
+// guest has the song), synchronised start, scoreboard, results, drop-out.
+do {
+    var now = 0.0  // true time
+    var queue: [(at: Double, run: () -> Void)] = []
+    var rng = SplitMixTest(seed: 42)
+    func later(_ f: @escaping () -> Void) { queue.append((now + 0.010 + rng.next() * 0.030, f)) }
+    var ticks = 0  // integer tick count: float division could stall on a boundary
+    func run(until t: Double, tick: () -> Void) {
+        while now < t {
+            queue.sort { $0.at < $1.at }
+            let nextEvent = queue.first?.at ?? .infinity
+            let nextTick = Double(ticks + 1) * 0.05
+            if nextEvent <= nextTick { now = nextEvent; queue.removeFirst().run() } else { ticks += 1; now = nextTick; tick() }
+        }
+    }
+    let host = NetHost(host: NetPlayer(id: "", name: "Ant", instrument: .guitar, difficulty: .expert))
+    let offsets: [Double] = [5.0, -3.2]   // guest local clock − true time
+    var guests: [NetGuest] = []
+    var startAt: [Double?] = [nil, nil]
+    var gone = Set<Int>()
+    for (i, off) in offsets.enumerated() {
+        let g = NetGuest(me: NetPlayer(id: "", name: i == 0 ? "PC" : "Pad", instrument: .drums, difficulty: .hard))
+        g.hasSong = { _ in i == 0 }
+        g.onStart = { _, at, _ in startAt[i] = at }
+        g.send = { m in later { if !gone.contains(i) { host.receive(m, from: i, now: now) } } }
+        guests.append(g)
+        _ = off
+    }
+    host.send = { c, m in let g = guests[c]; let off = offsets[c]; later { if !gone.contains(c) { g.receive(m, now: now + off) } } }
+    let tickAll = {
+        host.tick(now: now)
+        for (i, g) in guests.enumerated() where !gone.contains(i) { g.tick(now: now + offsets[i]) }
+    }
+    for (i, g) in guests.enumerated() { g.connected(now: now + offsets[i]) }
+    run(until: 2, tick: tickAll)
+    // Join order depends on the random delays; check by name.
+    check(host.players.first?.name == "Ant" && Set(host.players.map(\.name)) == ["Ant", "PC", "Pad"] && guests.allSatisfy { $0.myID != nil && $0.players.count == 3 },
+          "F1 session: both guests joined (\(host.players.map(\.name).joined(separator: ", ")))")
+    host.pick(NetSong(chartHash: "abc", name: "Demo", artist: "S", lengthMs: 60000))
+    run(until: 2.5, tick: tickAll)
+    func has(_ n: String) -> Bool? { host.players.first { $0.name == n }?.hasSong }
+    check(has("Ant") == true && has("PC") == true && has("Pad") == false && host.readyPlayers.count == 2, "F1 session: song status Ant/PC/Pad = \(["Ant", "PC", "Pad"].map { has($0).map(String.init) ?? "?" })")
+    let hostStart = now + 3
+    host.start(at: hostStart, speed: 1)
+    run(until: 3, tick: tickAll)
+    let errs = startAt.enumerated().map { i, at in at.map { abs(($0 - offsets[i]) - hostStart) * 1000 } ?? 999 }
+    check(errs.allSatisfy { $0 < 20 }, "F1 session: synchronised start, error PC \(String(format: "%.1f", errs[0])) ms, Pad \(String(format: "%.1f", errs[1])) ms")
+    guests[0].report(NetScore(playerID: "", score: 4200, combo: 30, notesHit: 31, notesTotal: 40, spActive: false))
+    host.reportLocal(NetScore(playerID: "", score: 5100, combo: 35, notesHit: 36, notesTotal: 40, spActive: true))
+    run(until: 3.6, tick: tickAll)
+    let board = guests[1].scores.map { "\($0.playerID)=\($0.score)" }.joined(separator: ",")
+    check(guests[1].scores.count == 2 && guests[1].scores.contains { $0.playerID == guests[0].myID && $0.score == 4200 }, "F1 session: scoreboard reaches the other guest (\(board))")
+    gone.insert(1); host.disconnected(1)   // Pad drops out mid-song
+    var st = PlayStats(); st.score = 5100
+    host.finishLocal(st)
+    run(until: 4, tick: tickAll)
+    check(guests[0].finals["host"]?.score == 5100 && host.players.first { $0.name == "Pad" }?.connected == false,
+          "F1 session: results relayed; dropped player kept on the board as disconnected")
+    host.endSong(abort: false)
+    check(host.phase == .lobby && host.players.count == 2, "F1 session: back to lobby without the dropped player")
+}
+
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) FAILURE(S)")
 exit(failures == 0 ? 0 : 1)
+
+/// Deterministic 0..<1 randoms for the synthetic checks.
+struct SplitMixTest {
+    var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func next() -> Double {
+        state &+= 0x9E3779B97F4A7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return Double((z ^ (z >> 31)) >> 11) / Double(1 << 53)
+    }
+}

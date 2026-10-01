@@ -38,7 +38,7 @@ public enum JudgeEvent: Sendable {
     case streak(Int)
 }
 
-public struct SectionStat: Sendable, Codable {
+public struct SectionStat: Sendable, Codable, Equatable {
     public var name: String
     public var hit: Int
     public var total: Int
@@ -46,9 +46,13 @@ public struct SectionStat: Sendable, Codable {
     /// chart has none and the whole song is one "section".
     public var index: Int = -1
     public var accuracy: Double { total > 0 ? Double(hit) / Double(total) : 0 }
+    public init(name: String, hit: Int, total: Int, index: Int = -1) {
+        self.name = name; self.hit = hit; self.total = total; self.index = index
+    }
 }
 
-public struct PlayStats: Sendable, Codable {
+public struct PlayStats: Sendable, Codable, Equatable {
+    public init() {}
     public var score = 0
     public var notesHit = 0
     public var notesTotal = 0
