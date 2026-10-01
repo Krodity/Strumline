@@ -16,6 +16,10 @@ public final class StemMixer: @unchecked Sendable {
         var consumed: Int64 = 0  // atomic, frames
         var gain: Double = 1  // atomic target gain
         var current: Float = 1  // audio thread only
+        /// Frames the song clock moved past while this stem's ring was empty
+        /// (an underrun); dropped from the ring once they arrive so the stem
+        /// stays in step with the chart. Audio thread only (reset on seek).
+        var skip = 0
         var ended = false
         // resampler (feeder thread only)
         let step: Double
@@ -44,6 +48,7 @@ public final class StemMixer: @unchecked Sendable {
             frac = 0
             histFill = 0
             tail = 0
+            skip = 0
             srcFrames.removeAll(keepingCapacity: true)
             srcPos = 0
             ended = false
@@ -220,9 +225,19 @@ public final class StemMixer: @unchecked Sendable {
         for s in stems {
             let target = Float(sl_loadd(&s.gain)) * master
             var g = s.current
-            let c = sl_load64(&s.consumed)
-            let avail = Int(sl_load64(&s.written) - c)
-            let n = min(frames - lead, avail)
+            var c = sl_load64(&s.consumed)
+            var avail = Int(sl_load64(&s.written) - c)
+            // Catch up after an underrun instead of playing late forever.
+            if s.skip > 0 && avail > 0 {
+                let d = min(s.skip, avail)
+                c += Int64(d)
+                avail -= d
+                s.skip -= d
+                sl_store64(&s.consumed, c)
+            }
+            let want = frames - lead
+            let n = min(want, avail)
+            if n < want { s.skip += want - max(0, n) }  // harmless once the stem has ended
             let mask = s.capacity - 1
             if n > 0 {
                 // ~5 ms gain ramp avoids clicks on mute/unmute.

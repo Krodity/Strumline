@@ -96,6 +96,9 @@ public struct SngPackage: SongPackage {
         guard let idxLenD = try fh.read(upToCount: 8), idxLenD.count == 8 else { throw ChartError.invalid("Truncated .sng") }
         let idxLen = u64(idxLenD, 0)
         guard idxLen >= 8, idxLen < 16 << 20, let idx = try fh.read(upToCount: idxLen), idx.count == idxLen else { throw ChartError.invalid("Bad .sng index") }
+        // Offsets and lengths come straight from the file; a corrupt one
+        // must fail the song, not trap in seek/read.
+        let fileSize = Int(try fh.seekToEnd())
         var entries: [Entry] = []
         let fcount = u64(idx, 0)
         p = 8
@@ -106,6 +109,7 @@ public struct SngPackage: SongPackage {
             let name = String(decoding: idx[idx.startIndex + p ..< idx.startIndex + p + nl], as: UTF8.self); p += nl
             let len = u64(idx, p); p += 8
             let off = u64(idx, p); p += 8
+            guard len >= 0, off >= 0, off <= fileSize, len <= fileSize - off else { throw ChartError.invalid("Bad .sng entry \(name)") }
             entries.append(Entry(name: name, length: len, offset: off))
         }
         self.entries = entries

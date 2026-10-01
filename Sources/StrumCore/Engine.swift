@@ -351,6 +351,9 @@ public final class PlayEngine {
     public private(set) var lastHitTime: [Double]  // per lane, for hit flashes
 
     private var brokenPhrases = Set<Int>()
+    /// Phrases already completed and awarded (kept apart from `brokenPhrases`
+    /// so whammying the last note's sustain still fills the meter).
+    private var completedPhrases = Set<Int>()
     private var next = 0
     private var lastFretChange: Double = -.infinity
     private var lastWhammyMove: Double = -.infinity
@@ -458,7 +461,7 @@ public final class PlayEngine {
                     let beats = tempo.beats(from: s.lastTime, to: end)
                     // 25 points per beat per sustained note.
                     scoreValue += 25 * beats * Double(multiplier)
-                    if s.sp && !brokenPhrases.contains(track.chords[s.chord].spPhrase) || (s.sp && spActive) {
+                    if s.sp && (spActive || !brokenPhrases.contains(track.chords[s.chord].spPhrase)) {
                         if b - lastWhammyMove <= config.whammyBuffer {
                             addSP(beats / 32)
                         }
@@ -690,7 +693,7 @@ public final class PlayEngine {
     }
 
     private func breakPhrase(_ p: Int) {
-        guard p >= 0, !brokenPhrases.contains(p) else { return }
+        guard p >= 0, !brokenPhrases.contains(p), !completedPhrases.contains(p) else { return }
         brokenPhrases.insert(p)
         events.append(.spPhraseBroken)
     }
@@ -703,11 +706,10 @@ public final class PlayEngine {
             for g in c.gems.indices { all |= 1 << UInt32(g) }
             if gemHit[i] != all { return }
         }
-        if chordState[i] == .hit && !brokenPhrases.contains(c.spPhrase) {
+        if chordState[i] == .hit && !brokenPhrases.contains(c.spPhrase) && completedPhrases.insert(c.spPhrase).inserted {
             spPhrasesHit += 1
             addSP(0.25)
             events.append(.spPhraseComplete)
-            brokenPhrases.insert(c.spPhrase)  // counted once
         }
     }
 

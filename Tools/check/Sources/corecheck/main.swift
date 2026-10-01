@@ -145,5 +145,109 @@ for (name, songs) in byName where songs.count > 1 {
     }
 }
 
+// MARK: - Regression checks (synthetic, need no song arguments)
+
+print("\n▶ regressions")
+let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("corecheck-\(getpid())", isDirectory: true)
+try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+defer { try? FileManager.default.removeItem(at: scratch) }
+
+// B1: a corrupt .sng index (negative / out-of-file entry) must throw, not trap.
+do {
+    func le64(_ v: UInt64) -> [UInt8] { (0..<8).map { UInt8(truncatingIfNeeded: v >> (8 * UInt64($0))) } }
+    for (label, len, off) in [("negative length", UInt64.max, UInt64(0)), ("offset past end", UInt64(4), UInt64(1) << 40), ("negative offset", UInt64(4), UInt64.max - 3)] {
+        var b = Array("SNGPKG".utf8) + [1, 0, 0, 0] + [UInt8](repeating: 0, count: 16)
+        b += le64(8) + le64(0)                      // metadata: 0 pairs
+        // Named notes.chart so the library scan actually reads the bad entry.
+        let idx = le64(1) + [11] + Array("notes.chart".utf8) + le64(len) + le64(off)
+        b += le64(UInt64(idx.count)) + idx
+        b += le64(4) + [1, 2, 3, 4]                 // file data
+        let u = scratch.appendingPathComponent("bad-\(label.replacingOccurrences(of: " ", with: "-")).sng")
+        try Data(b).write(to: u)
+        if (try? SngPackage(url: u)) == nil { print("  ✓ B1 corrupt .sng (\(label)) rejected") } else { fail("B1 corrupt .sng (\(label)) accepted") }
+    }
+    let scan = LibraryScanner.scan(roots: [scratch], cache: [:])
+    if scan.songs.isEmpty && scan.errors.count == 3 { print("  ✓ B1 library scan reports corrupt .sng files as errors") } else { fail("B1 scan: \(scan.songs.count) songs, \(scan.errors.count) errors") }
+} catch { fail("B1 setup: \(error)") }
+
+// B2: whammying the sustain of a phrase's last note still fills star power.
+do {
+    let dir = scratch.appendingPathComponent("whammy", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    // 120 BPM: 4 single notes, the last one a 4-beat sustain, all in one SP phrase.
+    let chart = """
+    [Song]
+    {
+      Resolution = 192
+    }
+    [SyncTrack]
+    {
+      0 = TS 4
+      0 = B 120000
+    }
+    [Events]
+    {
+    }
+    [ExpertSingle]
+    {
+      768 = N 0 0
+      960 = N 1 0
+      1152 = N 2 0
+      1344 = N 3 768
+      768 = S 2 600
+    }
+    """
+    try chart.write(to: dir.appendingPathComponent("notes.chart"), atomically: true, encoding: .utf8)
+    let pkg = try FolderPackage(url: dir)
+    let song = try SongLoader.loadChart(pkg: pkg, file: "notes.chart", ini: IniFile())
+    guard let track = song.track(.guitar, .expert) else { throw ChartError.invalid("no track") }
+    func run(whammy: Bool) -> Double {
+        let eng = PlayEngine(track: track, tempo: song.tempo, sections: [], config: EngineConfig(), drumMode: .fourLanePro)
+        for c in track.chords {
+            eng.handle(.fret(lane: c.gems[0].lane, down: true), at: c.time - 0.02)
+            eng.handle(.strum, at: c.time)
+        }
+        let last = track.chords.last!
+        var t = last.time + 0.05, v = 0.0
+        while t < last.sustainEndTime {
+            if whammy { v = v == 0 ? 0.8 : 0; eng.handle(.whammy(v), at: t) } else { eng.advance(to: t) }
+            t += 0.05
+        }
+        eng.advance(to: last.sustainEndTime + 0.5)
+        return eng.spMeter
+    }
+    let still = run(whammy: false), wham = run(whammy: true)
+    let line = "B2 SP after last-note sustain: \(String(format: "%.3f", still)) still, \(String(format: "%.3f", wham)) whammied"
+    if abs(still - 0.25) < 1e-9 && wham > 0.25 + 0.1 { print("  ✓ " + line) } else { fail(line) }
+} catch { fail("B2 setup: \(error)") }
+
+// B3: after an underrun a stem must line back up with the song clock.
+final class RampDecoder: AudioDecoder {
+    let sampleRate = 48000.0, channels = 1
+    let lengthFrames: Int? = 400_000
+    var pos = 0
+    func read(_ out: UnsafeMutablePointer<Float>, frames: Int) -> Int {
+        let n = min(frames, lengthFrames! - pos)
+        for i in 0..<max(0, n) { out[i] = Float(pos + i) / 1_000_000 }  // sample value = source frame
+        pos += max(0, n)
+        return max(0, n)
+    }
+    func seek(toFrame frame: Int) { pos = max(0, frame) }
+}
+do {
+    let mixer = StemMixer(outputRate: 48000, stems: [(.song, RampDecoder())])
+    mixer.seek(to: 0)  // prefills the ring; no feeder thread, so it then runs dry
+    mixer.setPaused(false)
+    var l = [Float](repeating: 0, count: 1000), r = [Float](repeating: 0, count: 1000)
+    func block() -> Int64 { l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in mixer.render(left: lp.baseAddress!, right: rp.baseAddress!, frames: 1000) } } }
+    for _ in 0..<140 { _ = block() }  // ~131k frames buffered → ~9k frames of underrun
+    mixer.prefill()
+    let at = block()
+    let heard = Int((Double(l[0]) * 1_000_000).rounded())
+    let line = "B3 after underrun: song frame \(at), stem frame \(heard)"
+    if abs(heard - Int(at)) <= 1 { print("  ✓ " + line) } else { fail(line + " (out of sync by \(Int(at) - heard))") }
+    mixer.stop()
+}
+
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) FAILURE(S)")
 exit(failures == 0 ? 0 : 1)
