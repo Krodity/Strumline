@@ -19,8 +19,9 @@ struct LibraryView: View {
         }
         for loc in app.locations {
             let isArmed = armed == loc.id
-            r.append(NavRow(id: "loc-\(loc.id)", section: "Linked", title: (loc.isFile ? "📦 " : "📁 ") + loc.name,
+            r.append(NavRow(id: "loc-\(loc.id)", section: "Linked", title: loc.name,
                             detail: isArmed ? "Press again to unlink — its songs leave the library (files aren't touched)" : "Press twice to unlink",
+                            symbol: loc.isFile ? "shippingbox.fill" : "folder.fill",
                             kind: .button(destructive: isArmed) {
                 if isArmed { armed = nil; app.unlink(loc) } else { armed = loc.id }
             }))
@@ -39,12 +40,7 @@ struct LibraryView: View {
 
     var body: some View {
         NavForm(rows: rows, onBack: { app.screen = .menu })
-        .navigationTitle("Library")
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button { app.screen = .menu } label: { Label("Menu", systemImage: "chevron.left") }
-            }
-        }
+        .screenChrome("Library") { app.screen = .menu }
         // One importer only: SwiftUI ignores all but the last on a view.
         .fileImporter(isPresented: $importing, allowedContentTypes: importTypes, allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { app.link(urls: urls) }

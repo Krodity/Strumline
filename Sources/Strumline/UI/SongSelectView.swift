@@ -37,6 +37,7 @@ struct SongSelectView: View {
                     } else {
                         songList(list)
                     }
+                    ControlLegend([.move, .page, .select, .back])
                     PlayerBar()
                 }
             }
@@ -102,23 +103,22 @@ struct SongSelectView: View {
 
     private func header(_ list: [SongEntry]) -> some View {
         VStack(spacing: 8) {
-            HStack {
-                Button { app.preview.stop(); app.screen = .menu } label: {
-                    Image(systemName: "chevron.left").font(.title3.bold())
-                }
-                Text(practice ? "Practice" : "Quickplay").font(.system(size: 24, weight: .black, design: .rounded))
-                Spacer()
+            ScreenHeader(title: practice ? "Practice" : "Quickplay", onBack: { app.preview.stop(); app.screen = .menu }) {
                 if app.scanning { ProgressView().controlSize(.small) }
-                Text("\(list.count)").font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                // The sort is named, not just an icon.
                 Menu {
                     Picker("Sort", selection: $app.settings.sort) {
                         ForEach(SongSort.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                 } label: {
-                    Image(systemName: "arrow.up.arrow.down.circle").font(.title3)
+                    Label(app.settings.sort.displayName, systemImage: "arrow.up.arrow.down")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(Capsule().fill(Theme.Surface.control))
                 }
-                Button { app.rescan() } label: { Image(systemName: "arrow.clockwise.circle").font(.title3) }
+                Button { app.rescan() } label: { Image(systemName: "arrow.clockwise").font(.body.weight(.semibold)) }
                     .disabled(app.scanning)
+                    .accessibilityLabel("Rescan library")
             }
             HStack {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -128,9 +128,10 @@ struct SongSelectView: View {
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                 }
+                Text("\(list.count)").font(.footnote.monospacedDigit()).foregroundStyle(.tertiary)
             }
             .padding(10)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.08)))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(Theme.Surface.control))
             if app.pendingDownloads > 0 {
                 Text("Downloading \(app.pendingDownloads) file(s) from iCloud… they'll appear automatically.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -165,7 +166,7 @@ struct SongSelectView: View {
                                     selected = s
                                     showSetup = true
                                 }
-                                .listRowBackground(selected?.path == s.path ? Palette.orange.opacity(0.22) : Color.white.opacity(0.03))
+                                .listRowBackground(selected?.path == s.path ? Theme.Surface.selected : Theme.Surface.row)
                         }
                     } header: {
                         if !title.isEmpty { Text(title).font(.caption.bold()) }
@@ -205,12 +206,12 @@ struct SongRow: View {
     var body: some View {
         HStack(spacing: 12) {
             AlbumArt(song: song, size: 48)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(song.name).font(.system(size: 16, weight: .bold)).lineLimit(1)
-                Text(song.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                if !song.charter.isEmpty {
-                    Text(song.charter).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
-                }
+            // Always two lines, so every row is the same height.
+            VStack(alignment: .leading, spacing: 3) {
+                Text(song.name).font(Theme.Fonts.heading).lineLimit(1)
+                (Text(song.artist).foregroundStyle(.secondary)
+                    + Text(song.charter.isEmpty ? "" : "  ·  \(song.charter)").foregroundStyle(.tertiary))
+                    .font(.subheadline).lineLimit(1)
             }
             Spacer(minLength: 4)
             VStack(alignment: .trailing, spacing: 3) {

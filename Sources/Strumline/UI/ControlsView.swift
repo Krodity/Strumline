@@ -36,7 +36,7 @@ struct ControlsView: View {
                     if list.isEmpty {
                         Text("Unbound").font(.caption).foregroundStyle(.tertiary)
                     } else {
-                        FlowChips(items: list.map(\.label)) { i in
+                        FlowChips(items: list.map { ($0.symbol, $0.label) }) { i in
                             var m = input.bindings
                             m.map[a]?.remove(at: i)
                             input.bindings = m
@@ -50,10 +50,10 @@ struct ControlsView: View {
 
     private var rows: [NavRow] {
         var r: [NavRow] = [
-            NavRow(id: "help", section: "Connected", title: "Confirm / → adds an input to the highlighted action; ← removes its last one.", detail: "Guitars and kits work when iOS sees them as a game controller (Xbox/PlayStation/Switch/MFi modes). Drum kits also work over USB or Bluetooth MIDI.", kind: .info),
+            NavRow(id: "help", section: "Connected", title: "Select or → adds an input · ← removes the last", detail: "Guitars and kits work in Xbox / PlayStation / Switch controller modes; drum kits also over USB or Bluetooth MIDI.", kind: .info),
         ]
         for d in input.devices {
-            r.append(NavRow(id: "dev-" + d.id, section: "Connected", title: d.name, kind: .info))
+            r.append(NavRow(id: "dev-" + d.id, section: "Connected", title: d.name, symbol: icon(d.kind), kind: .info))
         }
         r += bindingRows("Guitar", GameAction.guitar)
         r += bindingRows("Drums", GameAction.drums)
@@ -68,12 +68,7 @@ struct ControlsView: View {
 
     var body: some View {
         NavForm(rows: rows, onBack: { input.cancelCapture(); app.screen = .menu })
-            .navigationTitle("Controls")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button { input.cancelCapture(); app.screen = .menu } label: { Label("Menu", systemImage: "chevron.left") }
-                }
-            }
+            .screenChrome("Controls") { input.cancelCapture(); app.screen = .menu }
             .overlay {
                 if let a = input.capturing {
                     VStack(spacing: 14) {
@@ -83,7 +78,7 @@ struct ControlsView: View {
                         Button("Cancel") { input.cancelCapture() }
                     }
                     .padding(30)
-                    .background(RoundedRectangle(cornerRadius: 20).fill(.ultraThinMaterial))
+                    .background(RoundedRectangle(cornerRadius: Theme.Radius.sheet).fill(.ultraThinMaterial))
                 }
             }
     }
@@ -101,19 +96,21 @@ struct ControlsView: View {
 
 /// Removable chips that wrap onto new lines.
 struct FlowChips: View {
-    var items: [String]
+    /// (SF Symbol, text) per chip.
+    var items: [(String, String)]
     var onRemove: (Int) -> Void
 
     var body: some View {
         ChipLayout(spacing: 6) {
-            ForEach(Array(items.enumerated()), id: \.offset) { i, s in
+            ForEach(Array(items.enumerated()), id: \.offset) { i, item in
                 HStack(spacing: 4) {
-                    Text(s).font(.caption).lineLimit(1)
+                    Image(systemName: item.0).font(.system(size: 10)).foregroundStyle(.secondary)
+                    Text(item.1).font(.caption).lineLimit(1)
                     Button { onRemove(i) } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)) }
                         .buttonStyle(.borderless)
                 }
                 .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(Capsule().fill(Color.white.opacity(0.1)))
+                .background(Capsule().fill(Theme.Surface.control))
             }
         }
     }

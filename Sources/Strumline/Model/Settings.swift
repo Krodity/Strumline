@@ -159,10 +159,19 @@ enum InputBinding: Codable, Hashable {
 
     var label: String {
         switch self {
-        case .key(let k): return "⌨︎ " + KeyNames.name(k)
-        case .button(let b): return "🎮 " + b
-        case .axis(let a, let p): return "🎮 \(a) \(p ? "+" : "−")"
-        case .midi(let n): return "🥁 MIDI \(n) (\(KeyNames.drumName(n)))"
+        case .key(let k): return KeyNames.name(k)
+        case .button(let b): return b
+        case .axis(let a, let p): return "\(a) \(p ? "+" : "−")"
+        case .midi(let n): return "MIDI \(n) (\(KeyNames.drumName(n)))"
+        }
+    }
+
+    /// SF Symbol for the kind of input.
+    var symbol: String {
+        switch self {
+        case .key: return "keyboard"
+        case .button, .axis: return "gamecontroller.fill"
+        case .midi: return "pianokeys"
         }
     }
 }

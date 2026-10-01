@@ -72,12 +72,7 @@ struct SettingsView: View {
 
     var body: some View {
         NavForm(rows: rows, onBack: { app.screen = .menu })
-            .navigationTitle("Settings")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button { app.screen = .menu } label: { Label("Menu", systemImage: "chevron.left") }
-                }
-            }
+            .screenChrome("Settings") { app.screen = .menu }
             .sheet(isPresented: $calibrating) {
                 CalibrationView().environmentObject(app)
             }

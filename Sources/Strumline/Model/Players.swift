@@ -65,6 +65,14 @@ extension AppModel {
 
     func addPlayer(device: String?) {
         guard players.count < AppModel.maxPlayers else { return }
+        // Only player 1 can take "any device": anyone else needs a device of
+        // their own or nothing they press reaches them. Added by tapping the
+        // bar, that's the first unclaimed one (normally the touchscreen).
+        var device = device
+        if device == nil && !players.isEmpty {
+            let claimed = Set(players.compactMap(\.deviceID))
+            device = InputManager.shared.devices.map(\.id).first { !claimed.contains($0) }
+        }
         let name = InputManager.shared.devices.first { $0.id == device }?.name
         var p = PlayerProfile(name: "Player \(players.count + 1)", deviceID: device, deviceName: name)
         p.instrument = settings.lastInstrument
@@ -103,19 +111,21 @@ struct PlayerBar: View {
             HStack(spacing: 8) {
                 ForEach(app.players.indices, id: \.self) { i in
                     slot(i).frame(width: 128)
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.orange, lineWidth: app.playerBarFocus == i ? 2.5 : 0))
+                        .focusRing(app.playerBarFocus == i, radius: Theme.Radius.medium)
                 }
                 if app.players.count < AppModel.maxPlayers {
                     Button { app.addPlayer(device: nil); editing = app.players.count - 1 } label: {
                         VStack(spacing: 2) {
                             Image(systemName: "plus.circle").font(.system(size: 15))
-                            Text("Press Start\nto join").font(.system(size: 10, weight: .semibold)).multilineTextAlignment(.center)
+                            // "Start" only means something with a controller or keyboard.
+                            Text(InputManager.shared.hasPhysicalInput ? "Add player\nor press Start" : "Add player")
+                                .font(.system(size: 10, weight: .semibold)).multilineTextAlignment(.center)
                         }
                         .foregroundStyle(.white.opacity(0.45))
                         .frame(width: 110, height: 50)
-                        .background(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                        .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).strokeBorder(Theme.Surface.stroke, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
                     }
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.orange, lineWidth: app.playerBarFocus == app.players.count ? 2.5 : 0))
+                    .focusRing(app.playerBarFocus == app.players.count, radius: Theme.Radius.medium)
                 }
             }
         }
@@ -167,7 +177,7 @@ struct PlayerBar: View {
             }
             .padding(6)
             .frame(maxWidth: .infinity, minHeight: 50)
-            .background(RoundedRectangle(cornerRadius: 10).fill(PlayerProfile.colors[i % 6].opacity(0.15)))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(PlayerProfile.colors[i % 6].opacity(0.15)))
         }
         .foregroundStyle(.white)
     }
@@ -222,7 +232,6 @@ struct PlayerSettingsSheet: View {
                 dismiss()
             }))
         }
-        r.append(NavRow(id: "done", section: index > 0 ? "Leave" : "Modifiers", title: "Done", kind: .button(destructive: false) { dismiss() }))
         return r
     }
 
@@ -230,9 +239,7 @@ struct PlayerSettingsSheet: View {
         NavigationStack {
             if valid {
                 NavForm(rows: rows, onBack: { dismiss() })
-                    .navigationTitle(index < app.players.count ? app.players[index].name : "Player")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+                    .sheetChrome(index < app.players.count ? app.players[index].name : "Player") { dismiss() }
                     .sheet(isPresented: $showMods) {
                         ModifiersView(kind: instrument.wrappedValue.kind, practice: false, mods: modifiers, noteSpeed: noteSpeed, highwayLength: highwayLength)
                             .environmentObject(app)

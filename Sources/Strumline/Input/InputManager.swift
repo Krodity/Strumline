@@ -35,6 +35,10 @@ final class InputManager: ObservableObject, @unchecked Sendable {
     static let shared = InputManager()
 
     @Published private(set) var devices: [InputDevice] = []
+    /// A controller, hardware keyboard or MIDI kit is connected (the menus
+    /// then show a button legend). `devices` always lists the keyboard, so
+    /// this is tracked separately.
+    @Published private(set) var hasPhysicalInput = false
     @Published var capturing: GameAction? = nil
 
     /// Read on the input queue and CoreMIDI's thread, edited on main.
@@ -109,7 +113,11 @@ final class InputManager: ObservableObject, @unchecked Sendable {
             d.append(InputDevice(id: "midi:\(src)", name: (name?.takeRetainedValue() as String?) ?? "MIDI Source", kind: .midi))
         }
         let devices = d
-        DispatchQueue.main.async { self.devices = devices }
+        let physical = !GCController.controllers().isEmpty || GCKeyboard.coalesced != nil || MIDIGetNumberOfSources() > 0
+        DispatchQueue.main.async {
+            self.devices = devices
+            self.hasPhysicalInput = physical
+        }
     }
 
     // MARK: Capture (rebinding)

@@ -11,17 +11,17 @@ struct MenuButton: View {
         Button(role: role, action: action) {
             HStack(spacing: 12) {
                 Image(systemName: systemImage).frame(width: 24)
-                Text(title).font(.system(size: 18, weight: .bold, design: .rounded))
+                Text(title).font(Theme.Fonts.button)
                     .lineLimit(1).minimumScaleFactor(0.6)
                 Spacer()
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 13)
             .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 14).fill(role == .destructive ? Color.red.opacity(0.25) : Color.white.opacity(0.1)))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.15)))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.large).fill(role == .destructive ? Palette.red.opacity(0.22) : Theme.Surface.control))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.large).stroke(Theme.Surface.stroke))
         }
-        .foregroundStyle(role == .destructive ? .red : .white)
+        .foregroundStyle(role == .destructive ? Palette.red : .white)
     }
 }
 
@@ -68,7 +68,7 @@ struct IntensityDots: View {
             } else {
                 ForEach(0..<6, id: \.self) { i in
                     Circle()
-                        .fill(i < value ? (value >= 6 ? Color.red : Palette.orange) : Color.white.opacity(0.2))
+                        .fill(i < value ? (value >= 6 ? Palette.red : Theme.accent) : Theme.Surface.stroke)
                         .frame(width: 6, height: 6)
                 }
             }

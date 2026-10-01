@@ -19,6 +19,8 @@ struct NavRow: Identifiable {
     var section: String
     var title: String
     var detail: String? = nil
+    /// Optional SF Symbol shown before the title.
+    var symbol: String? = nil
     var kind: Kind
 
     var focusable: Bool {
@@ -46,10 +48,10 @@ struct NavForm: View {
                         ForEach(rows.filter { $0.section == sec }) { row in
                             rowView(row)
                                 .id(row.id)
-                                .listRowBackground(focus == row.id ? Palette.orange.opacity(0.22) : Color.white.opacity(0.05))
+                                .listRowBackground(focus == row.id ? Theme.Surface.selected : Theme.Surface.card)
                                 .overlay(alignment: .leading) {
                                     if focus == row.id {
-                                        Rectangle().fill(Palette.orange).frame(width: 3).padding(.leading, -20)
+                                        Rectangle().fill(Theme.accent).frame(width: 3).padding(.leading, -20)
                                     }
                                 }
                         }
@@ -58,6 +60,7 @@ struct NavForm: View {
             }
             .onAppear { scroller = proxy }
         }
+        .safeAreaInset(edge: .bottom) { ControlLegend([.move, .change, .select, .back]) }
         .menuNavigation { nav in navigate(nav) }
     }
 
@@ -89,9 +92,14 @@ struct NavForm: View {
     }
 
     private func label(_ row: NavRow) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(row.title)
-            if let d = row.detail { Text(d).font(.caption).foregroundStyle(.secondary) }
+        HStack(spacing: 10) {
+            if let sym = row.symbol {
+                Image(systemName: sym).foregroundStyle(Theme.accent).frame(width: 22)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title)
+                if let d = row.detail { Text(d).font(.caption).foregroundStyle(.secondary) }
+            }
         }
     }
 

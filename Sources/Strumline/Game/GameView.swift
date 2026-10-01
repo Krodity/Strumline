@@ -151,7 +151,7 @@ struct GameView: View {
     }
 
     private func focusRing(_ i: Int) -> some View {
-        RoundedRectangle(cornerRadius: 14).stroke(Palette.orange, lineWidth: session.pauseSelection == i ? 2.5 : 0)
+        RoundedRectangle(cornerRadius: Theme.Radius.large).stroke(Theme.accent, lineWidth: session.pauseSelection == i ? Theme.focusWidth : 0)
     }
 
     private func pauseAction(_ i: Int) {
@@ -165,7 +165,7 @@ struct GameView: View {
 
     private var pauseMenu: some View {
         VStack(spacing: 14) {
-            Text("Paused").font(.system(size: 34, weight: .black, design: .rounded))
+            Text("Paused").font(Theme.Fonts.display)
             Text("\(session.song.name) — \(session.song.artist)")
                 .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             Text("\(session.instrument.displayName) · \(session.difficulty.displayName)")
@@ -175,7 +175,7 @@ struct GameView: View {
                     .overlay(focusRing(0))
                 MenuButton(title: "Restart", systemImage: "arrow.counterclockwise") { pauseAction(1) }
                     .overlay(focusRing(1))
-                MenuButton(title: "Settings", systemImage: "slider.horizontal.3") { pauseAction(2) }
+                MenuButton(title: "Adjust", systemImage: "slider.horizontal.3") { pauseAction(2) }
                     .overlay(focusRing(2))
                 MenuButton(title: "Quit", systemImage: "xmark", role: .destructive) { pauseAction(3) }
                     .overlay(focusRing(3))
@@ -184,7 +184,7 @@ struct GameView: View {
             .onAppear { session.pauseAction = { pauseAction($0) } }
         }
         .padding(28)
-        .background(RoundedRectangle(cornerRadius: 24).fill(.ultraThinMaterial))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.sheet).fill(.ultraThinMaterial))
     }
 }
 
@@ -197,17 +197,14 @@ struct QuickSettingsSheet: View {
         let st = $app.settings
         NavigationStack {
             NavForm(rows: [
+                // Just what you tweak mid-song; the rest lives in Settings.
                 NavRow(id: "ns", section: "Highway", title: "Track (note) speed", kind: .slider(st.noteSpeed, 0.25...10, step: 0.05, format: { String(format: "%.2f×", $0) })),
-                NavRow(id: "hl", section: "Highway", title: "Highway length", kind: .slider(st.highwayLength, 0.5...10, step: 0.05, format: { String(format: "%.2f×", $0) })),
-                NavRow(id: "hs", section: "Highway", title: "Highway scale", kind: .slider(st.highwayScale, 0.5...1.5, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })),
                 NavRow(id: "ao", section: "Calibration", title: "Audio offset", kind: .slider(st.audioOffsetMs, -300...300, step: 1, format: { "\(Int($0)) ms" })),
                 NavRow(id: "vo", section: "Calibration", title: "Video offset", kind: .slider(st.videoOffsetMs, -300...300, step: 1, format: { "\(Int($0)) ms" })),
                 NavRow(id: "note", section: "Apply", title: "Choose Restart to apply these to the current song.", kind: .info),
                 NavRow(id: "restart", section: "Apply", title: "Restart now", kind: .button(destructive: false) { dismiss(); app.restartCurrent() }),
-                NavRow(id: "done", section: "Apply", title: "Done", kind: .button(destructive: false) { dismiss() }),
             ], onBack: { dismiss() })
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
+            .sheetChrome("Adjust") { dismiss() }
         }
     }
 }

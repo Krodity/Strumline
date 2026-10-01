@@ -138,16 +138,16 @@ struct ResultsView: View {
                 }
             }
             .padding(12)
-            .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.06)))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(Theme.Surface.card))
         }
     }
 
     private var buttons: some View {
         HStack(spacing: 12) {
             MenuButton(title: "Retry", systemImage: "arrow.counterclockwise") { app.restartCurrent() }
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.orange, lineWidth: choice == 0 ? 2.5 : 0))
+                .focusRing(choice == 0)
             MenuButton(title: "Continue", systemImage: "chevron.right") { app.screen = .songs(practice: false) }
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.orange, lineWidth: choice == 1 ? 2.5 : 0))
+                .focusRing(choice == 1)
         }
     }
 
@@ -185,7 +185,7 @@ struct ResultsView: View {
                         }
                     }
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.06)))
+                    .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(Theme.Surface.card))
                     .id("pl\(rank)")
                 }
                 buttons
@@ -198,11 +198,11 @@ struct ResultsView: View {
 
     private func stat(_ title: String, _ value: String) -> some View {
         VStack(spacing: 2) {
-            Text(value).font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
+            Text(value).font(Theme.Fonts.number)
             Text(title).font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(Theme.Surface.card))
     }
 }

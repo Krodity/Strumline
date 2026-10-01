@@ -72,7 +72,7 @@ struct MainMenuView: View {
                     VStack(spacing: 10) {
                         ForEach(Array(items.enumerated()), id: \.offset) { i, item in
                             MenuButton(title: item.0, systemImage: item.1) { app.screen = item.2 }
-                                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.orange, lineWidth: selection == i ? 2 : 0))
+                                .focusRing(selection == i)
                         }
                     }
                     .frame(maxWidth: 320)
@@ -80,7 +80,7 @@ struct MainMenuView: View {
                 .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            VStack { Spacer(); PlayerBar() }
+            VStack(spacing: 6) { Spacer(); ControlLegend([.move, .select]); PlayerBar() }
         }
         .onAppear { app.preview.stop() }
         .menuNavigation { nav in navigate(nav) }

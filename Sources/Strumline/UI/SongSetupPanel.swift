@@ -27,23 +27,18 @@ struct SongSetupPanel: View {
     /// Controller focus row: see `focusRows`.
     @State private var focusRow: FocusRow = .play
 
-    enum FocusRow: Hashable { case instrument, difficulty, kit, modifiers, songSpeed, noteSpeed, play }
+    enum FocusRow: Hashable { case instrument, difficulty, kit, modifiers, songSpeed, play }
 
     private var focusRows: [FocusRow] {
         var r: [FocusRow] = [.instrument, .difficulty]
         if instrument == .drums { r.append(.kit) }
         r.append(.modifiers)
         if !practice { r.append(.songSpeed) }
-        r.append(.noteSpeed)
         r.append(.play)
         return r
     }
 
-    private func ring(_ row: FocusRow) -> some View {
-        RoundedRectangle(cornerRadius: 14)
-            .stroke(Palette.orange, lineWidth: focused && focusRow == row ? 2.5 : 0)
-            .padding(-6)
-    }
+    private func isFocused(_ row: FocusRow) -> Bool { focused && focusRow == row }
     @State private var scroller: ScrollViewProxy?
 
     var body: some View {
@@ -64,27 +59,31 @@ struct SongSetupPanel: View {
                                 }
                                 .padding(14)
                             }
-                            ScrollView {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    modifierSection.id("p2")
-                                    warningView
-                                    playButton.id("p3")
+                            VStack(spacing: 0) {
+                                ScrollView {
+                                    VStack(alignment: .leading, spacing: 12) {
+                                        modifierSection.id("p2")
+                                        warningView
+                                    }
+                                    .padding(14)
                                 }
-                                .padding(14)
+                                footer.padding(.horizontal, 14).padding(.bottom, 10)
                             }
                         }
                     } else {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 18) {
-                                topBar
-                                headerView(compact: false).id("p0")
-                                partsView.id("p1")
-                                modifierSection.id("p2")
-                                if practice { practiceControls }
-                                warningView
-                                playButton.id("p3")
+                        VStack(spacing: 0) {
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 18) {
+                                    topBar
+                                    headerView(compact: false).id("p0")
+                                    partsView.id("p1")
+                                    modifierSection.id("p2")
+                                    if practice { practiceControls }
+                                    warningView
+                                }
+                                .padding(20)
                             }
-                            .padding(20)
+                            footer.padding(.horizontal, 20).padding(.bottom, 12)
                         }
                     }
                 }
@@ -109,16 +108,20 @@ struct SongSetupPanel: View {
         if inSheet {
             HStack {
                 Spacer()
-                Button { onClose() } label: {
-                    Image(systemName: "xmark.circle.fill").font(.title2).foregroundStyle(.secondary)
-                }
+                Button("Done") { onClose() }.bold()
             }
             .padding(.bottom, -10)
         }
-        if focused && !InputManager.shared.devices.allSatisfy({ $0.kind == .touch }) {
-            Label("↑↓ move · ←→ change · green selects (Modifiers opens the full list) · red closes", systemImage: "gamecontroller")
-                .font(.caption2).foregroundStyle(.secondary)
+    }
+
+    /// Play stays on screen; the legend sits under it when a controller,
+    /// keyboard or kit is connected.
+    private var footer: some View {
+        VStack(spacing: 8) {
+            playButton.id("p3")
+            if focused { ControlLegend([.move, .change, .select, .back]) }
         }
+        .padding(.top, 8)
     }
 
     @ViewBuilder private func headerView(compact: Bool) -> some View {
@@ -149,7 +152,7 @@ struct SongSetupPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             // Instrument
             VStack(alignment: .leading, spacing: 8) {
-                Text("Instrument").font(.caption.bold()).foregroundStyle(.secondary)
+                SectionLabel("Instrument")
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(song.instruments) { i in
@@ -160,19 +163,18 @@ struct SongSetupPanel: View {
                                     IntensityDots(value: song.intensity(i))
                                 }
                                 .padding(.horizontal, 12).padding(.vertical, 8)
-                                .background(RoundedRectangle(cornerRadius: 12).fill(instrument == i ? Palette.orange.opacity(0.35) : Color.white.opacity(0.08)))
-                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(instrument == i ? Palette.orange : .clear, lineWidth: 2))
+                                .tile(selected: instrument == i)
                             }
                             .foregroundStyle(.white)
                         }
                     }
                 }
             }
-            .overlay(ring(.instrument))
+            .focusRing(isFocused(.instrument), inset: -6)
 
             // Difficulty
             VStack(alignment: .leading, spacing: 8) {
-                Text("Difficulty").font(.caption.bold()).foregroundStyle(.secondary)
+                SectionLabel("Difficulty")
                 HStack(spacing: 8) {
                     ForEach(song.difficulties(for: instrument)) { d in
                         Button { difficulty = d } label: {
@@ -187,20 +189,19 @@ struct SongSetupPanel: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(difficulty == d ? Palette.orange.opacity(0.35) : Color.white.opacity(0.08)))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(difficulty == d ? Palette.orange : .clear, lineWidth: 2))
+                            .tile(selected: difficulty == d)
                         }
                         .foregroundStyle(.white)
                     }
                 }
             }
-            .overlay(ring(.difficulty))
+            .focusRing(isFocused(.difficulty), inset: -6)
             if instrument == .drums {
                 Picker("Drum kit", selection: $app.settings.drumMode) {
                     ForEach(DrumPlayMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .overlay(ring(.kit))
+                .focusRing(isFocused(.kit), inset: -6)
                 if let t = song.drumType {
                     Text("Charted as \(t == .fiveLane ? "5-lane" : t == .fourLanePro ? "4-lane Pro" : "4-lane") drums").font(.caption).foregroundStyle(.secondary)
                 }
@@ -216,16 +217,16 @@ struct SongSetupPanel: View {
     }
 
     private var playButton: some View {
-        playButtonBody.overlay(ring(.play))
+        playButtonBody.focusRing(isFocused(.play), inset: -6)
     }
 
     private var playButtonBody: some View {
         Button { start() } label: {
             Label(practice ? "Practice" : "Play", systemImage: "play.fill")
-                .font(.system(size: 20, weight: .black, design: .rounded))
+                .font(Theme.Fonts.title.weight(.black))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .background(RoundedRectangle(cornerRadius: 14).fill(LinearGradient(colors: [Palette.orange, Palette.red], startPoint: .leading, endPoint: .trailing)))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.large).fill(LinearGradient(colors: [Palette.orange, Palette.red], startPoint: .leading, endPoint: .trailing)))
         }
         .foregroundStyle(.white)
         .disabled(song.difficulties(for: instrument).isEmpty)
@@ -233,7 +234,7 @@ struct SongSetupPanel: View {
 
     /// Controllers can't drag a scroll view: page through the sections.
     private func turnPage(_ delta: Int) {
-        page = max(0, min(3, page + delta))
+        page = max(0, min(2, page + delta))
         withAnimation { scroller?.scrollTo("p\(page)", anchor: .top) }
     }
 
@@ -258,7 +259,8 @@ struct SongSetupPanel: View {
         case .up, .down:
             let n = max(0, min(rows.count - 1, idx + (nav == .down ? 1 : -1)))
             focusRow = rows[n]
-            let target = [FocusRow.instrument, .difficulty, .kit].contains(focusRow) ? "p1" : focusRow == .play ? "p3" : "p2"
+            // Play is pinned below the scroll view, so it needs no scrolling.
+            let target = [FocusRow.instrument, .difficulty, .kit].contains(focusRow) ? "p1" : "p2"
             withAnimation { scroller?.scrollTo(target, anchor: .center) }
         case .left, .right:
             adjust(focusRow, by: nav == .right ? 1 : -1)
@@ -293,9 +295,6 @@ struct SongSetupPanel: View {
         case .songSpeed:
             let v = app.settings.modifiers.songSpeed + Double(d) * 0.05
             app.settings.modifiers.songSpeed = min(3, max(0.25, (v * 20).rounded() / 20))
-        case .noteSpeed:
-            let v = app.settings.noteSpeed + Double(d) * 0.25
-            app.settings.noteSpeed = min(10, max(0.25, (v * 4).rounded() / 4))
         case .modifiers, .play:
             break
         }
@@ -329,20 +328,16 @@ struct SongSetupPanel: View {
             Button { showMods = true } label: {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Modifiers").font(.caption.bold()).foregroundStyle(.secondary)
+                        SectionLabel("Modifiers")
                         Spacer()
-                        Label(active.isEmpty ? "Add" : "Edit", systemImage: "plus.circle").font(.caption.bold()).foregroundStyle(Palette.orange)
+                        Label(active.isEmpty ? "Add" : "Edit", systemImage: active.isEmpty ? "plus.circle" : "slider.horizontal.3").font(.caption.bold()).foregroundStyle(Theme.accent)
                     }
                     if active.isEmpty {
                         Text("None").font(.subheadline).foregroundStyle(.secondary)
                     } else {
                         ChipLayout(spacing: 6) {
                             ForEach(active, id: \.self) { n in
-                                let warn = n == "Drunk"
-                                Text(n).font(.caption.bold()).lineLimit(1)
-                                    .padding(.horizontal, 10).padding(.vertical, 6)
-                                    .background(Capsule().fill(warn ? Palette.yellow.opacity(0.35) : Palette.orange.opacity(0.4)))
-                                    .overlay(Capsule().stroke(warn ? Palette.yellow : Palette.orange, lineWidth: 1.5))
+                                Chip(text: n, warn: n == "Drunk")
                             }
                         }
                     }
@@ -351,7 +346,7 @@ struct SongSetupPanel: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.white)
-            .overlay(ring(.modifiers))
+            .focusRing(isFocused(.modifiers), inset: -6)
             if !active.isEmpty {
                 Button("Clear modifiers") {
                     let speed = app.settings.modifiers.songSpeed
@@ -364,18 +359,16 @@ struct SongSetupPanel: View {
             }
             if !practice {
                 SliderRow(title: "Song speed", value: mods.songSpeed, range: 0.25...3.0, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })
-                    .overlay(ring(.songSpeed))
+                    .focusRing(isFocused(.songSpeed), inset: -6)
             }
-            SliderRow(title: "Track (note) speed", value: $app.settings.noteSpeed, range: 0.25...10, step: 0.05, format: { String(format: "%.2f×", $0) })
-                .overlay(ring(.noteSpeed))
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(Theme.Surface.card))
     }
 
     @ViewBuilder private var practiceControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Practice").font(.caption.bold()).foregroundStyle(.secondary)
+            SectionLabel("Practice")
             if sections.isEmpty {
                 Text("This chart has no sections; the whole song will loop.").font(.caption).foregroundStyle(.secondary)
             } else {
@@ -389,7 +382,7 @@ struct SongSetupPanel: View {
             SliderRow(title: "Song speed", value: $app.settings.practiceSpeed, range: 0.25...3.0, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(Theme.Surface.card))
     }
 }
 
@@ -449,7 +442,6 @@ struct ModifiersView: View {
                 m.wrappedValue = Modifiers()
                 m.wrappedValue.songSpeed = speed
             }),
-            NavRow(id: "done", section: "Reset", title: "Done", kind: .button(destructive: false) { dismiss() }),
         ]
         return r
     }
@@ -457,9 +449,7 @@ struct ModifiersView: View {
     var body: some View {
         NavigationStack {
             NavForm(rows: rows, onBack: { dismiss() })
-                .navigationTitle("Modifiers")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+                .sheetChrome("Modifiers") { dismiss() }
         }
     }
 }
