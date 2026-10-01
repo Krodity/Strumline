@@ -222,7 +222,7 @@ struct PlayerSettingsSheet: View {
             NavRow(id: "ns", section: "Highway", title: "Track (note) speed", kind: .slider(noteSpeed, 0.25...10, step: 0.05, format: { String(format: "%.2f×", $0) })),
             NavRow(id: "hl", section: "Highway", title: "Highway length", kind: .slider(highwayLength, 0.5...10, step: 0.05, format: { String(format: "%.2f×", $0) })),
             NavRow(id: "hs", section: "Highway", title: "Highway scale", kind: .slider(highwayScale, 0.5...1.5, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })),
-            .pick("hwimg", "Highway", "Highway image", detail: "Add images in Settings › Import highway image, or On My iPhone › Strumline › Custom › Highways.", options: [String?.none] + CustomAssets.highwayFiles.map { Optional($0) }, label: { $0.map { ($0 as NSString).deletingPathExtension } ?? "Default" }, selection: highwayImage),
+            .pick("hwimg", "Highway", "Highway image", detail: "Add images in Settings › Custom Content.", options: [String?.none] + CustomAssets.highwayFiles.map { Optional($0) }, label: { $0.map { ($0 as NSString).deletingPathExtension } ?? "Default" }, selection: highwayImage),
             NavRow(id: "lefty", section: "Highway", title: "Lefty flip", kind: .toggle(lefty)),
             NavRow(id: "mods", section: "Modifiers", title: "Modifiers…", detail: modifiers.wrappedValue.activeNames.joined(separator: ", ").nilIfEmpty, kind: .button(destructive: false) { showMods = true }),
         ]
@@ -241,7 +241,7 @@ struct PlayerSettingsSheet: View {
                 NavForm(rows: rows, onBack: { dismiss() })
                     .sheetChrome(index < app.players.count ? app.players[index].name : "Player") { dismiss() }
                     .sheet(isPresented: $showMods) {
-                        ModifiersView(kind: instrument.wrappedValue.kind, practice: false, mods: modifiers, noteSpeed: noteSpeed, highwayLength: highwayLength)
+                        ModifiersView(kind: instrument.wrappedValue.kind, mods: modifiers)
                             .environmentObject(app)
                     }
             }

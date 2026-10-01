@@ -137,11 +137,11 @@ struct ScreenHeader<Trailing: View>: View {
 
 extension View {
     /// Title + the standard back button for screens inside a NavigationStack.
-    func screenChrome(_ title: String, onBack: @escaping () -> Void) -> some View {
+    func screenChrome(_ title: String, back: String = "Menu", onBack: @escaping () -> Void) -> some View {
         navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarBackButtonHidden()
-            .toolbar { ToolbarItem(placement: .navigationBarLeading) { BackButton(action: onBack) } }
+            .toolbar { ToolbarItem(placement: .navigationBarLeading) { BackButton(title: back, action: onBack) } }
     }
 
     /// Title + a single Done button for sheets.

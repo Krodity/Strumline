@@ -97,7 +97,7 @@ struct SongSetupPanel: View {
             if practice { loadSections() }
         }
         .sheet(isPresented: $showMods) {
-            ModifiersView(kind: instrument.kind, practice: practice)
+            ModifiersView(kind: instrument.kind)
                 .environmentObject(app)
                 .presentationDetents([.large])
         }
@@ -391,11 +391,8 @@ struct ModifiersView: View {
     @EnvironmentObject var app: AppModel
     @Environment(\.dismiss) private var dismiss
     var kind: InstrumentKind
-    var practice: Bool
     /// Whose settings to edit (default: player 1's).
     var mods: Binding<Modifiers>? = nil
-    var noteSpeed: Binding<Double>? = nil
-    var highwayLength: Binding<Double>? = nil
 
     private var m: Binding<Modifiers> { mods ?? $app.settings.modifiers }
 
@@ -403,11 +400,8 @@ struct ModifiersView: View {
         func t(_ id: String, _ sec: String, _ title: String, _ detail: String, _ b: Binding<Bool>) -> NavRow {
             NavRow(id: id, section: sec, title: title, detail: detail, kind: .toggle(b))
         }
-        var r: [NavRow] = [
-            NavRow(id: "ss", section: "Speed", title: "Song speed", kind: .slider(practice && mods == nil ? $app.settings.practiceSpeed : m.songSpeed, 0.25...3.0, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })),
-            NavRow(id: "ns", section: "Speed", title: "Track (note) speed", kind: .slider(noteSpeed ?? $app.settings.noteSpeed, 0.25...10, step: 0.05, format: { String(format: "%.2f×", $0) })),
-            NavRow(id: "hl", section: "Speed", title: "Highway length", kind: .slider(highwayLength ?? $app.settings.highwayLength, 0.5...10, step: 0.05, format: { String(format: "%.2f×", $0) })),
-        ]
+        // Song speed lives on the setup panel (one song, one speed), not here.
+        var r: [NavRow] = []
         if kind != .drums {
             r += [
                 t("auto", "Guitar", "Auto Strum", "Strums for you — just fret. Scores are still saved.", m.autoStrum),
@@ -437,8 +431,8 @@ struct ModifiersView: View {
             t("shuffle", "Chart", "Note Shuffle", "Randomizes note placement — the same way every time.", m.shuffle),
             t("lights", "Display", "Lights Out", "Hides the highway, including the notes.", m.lightsOut),
             .pick("modchart", "Display", "Modchart", options: Modifiers.Modchart.allCases, label: { $0.displayName }, selection: m.modchart),
-            NavRow(id: "reset", section: "Reset", title: "Reset all modifiers", kind: .button(destructive: true) {
-                let speed = practice ? m.wrappedValue.songSpeed : 1
+            NavRow(id: "reset", section: "Reset", title: "Reset all modifiers", detail: "Song speed is kept", kind: .button(destructive: true) {
+                let speed = m.wrappedValue.songSpeed
                 m.wrappedValue = Modifiers()
                 m.wrappedValue.songSpeed = speed
             }),

@@ -16,7 +16,7 @@ A Clone Hero–style rhythm game for iOS, written from scratch in Swift (SwiftUI
 Modifiers: Precision, Drunk, Brutal, Dropless Sustains, Strumless HOPOs, Double Notes, No/Deadly Ghosting, All Strums/HOPOs/Taps/Opens, HOPOs→Taps, Mirror, Note Shuffle, Auto Strum (scores still saved, unlike Clone Hero), Lights Out, Modchart Full/Lite/Prep; drums: Deadly Dynamics, 2x Kick, No Kick, Only Kicks. Song speed 25–300 %, track (note) speed, highway length.
 
 ## Input
-Touch (tap lanes, or frets + strum bar; flick phone for star power), hardware keyboard, game controllers (anything iOS exposes as a GCController — guitars/adapters in XInput/Switch mode, gamepads), CoreMIDI drum kits (USB/Bluetooth, velocity for dynamics). Everything is rebindable in **Controls**.
+Touch (tap lanes, or frets + strum bar; flick phone for star power), hardware keyboard, game controllers (anything iOS exposes as a GCController — guitars/adapters in XInput/Switch mode, gamepads), CoreMIDI drum kits (USB/Bluetooth, velocity for dynamics). Everything is rebindable in **Settings › Controls**.
 
 ## Layout
 - `Sources/StrumCore` — platform-independent: `.chart`/`.mid`/`.sng`/`song.ini` parsing, tempo map, engine, modifiers, Ogg Vorbis (stb_vorbis) + Ogg Opus (libopus 1.5.2) + WAV decoders, lock-free stem mixer.

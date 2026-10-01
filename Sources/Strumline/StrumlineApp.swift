@@ -35,8 +35,6 @@ struct RootView: View {
                 ResultsView()
             case .settings:
                 NavigationStack { SettingsView() }
-            case .controls:
-                NavigationStack { ControlsView() }
             case .library:
                 NavigationStack { LibraryView() }
             }
@@ -53,7 +51,6 @@ struct MainMenuView: View {
         ("Quickplay", "play.fill", .songs(practice: false)),
         ("Practice", "metronome.fill", .songs(practice: true)),
         ("Library", "folder.fill", .library),
-        ("Controls", "gamecontroller.fill", .controls),
         ("Settings", "gearshape.fill", .settings),
     ]
 

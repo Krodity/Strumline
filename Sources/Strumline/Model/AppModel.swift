@@ -34,7 +34,6 @@ enum Screen: Equatable {
     case play
     case results
     case settings
-    case controls
     case library
 }
 

@@ -4,6 +4,22 @@ import StrumCore
 struct ControlsView: View {
     @EnvironmentObject var app: AppModel
     @ObservedObject private var input = InputManager.shared
+    /// Leaves the screen (Controls lives inside Settings).
+    var onBack: () -> Void = {}
+    /// Which group of bindings is shown.
+    @State private var group = BindingGroup.guitar
+
+    enum BindingGroup: String, CaseIterable {
+        case guitar, drums, menus
+        var title: String { rawValue.capitalized }
+        var actions: [GameAction] {
+            switch self {
+            case .guitar: return GameAction.guitar
+            case .drums: return GameAction.drums
+            case .menus: return GameAction.menu
+            }
+        }
+    }
     /// Reset takes two presses: the first arms it.
     @State private var resetArmed = false
 
@@ -55,9 +71,8 @@ struct ControlsView: View {
         for d in input.devices {
             r.append(NavRow(id: "dev-" + d.id, section: "Connected", title: d.name, symbol: icon(d.kind), kind: .info))
         }
-        r += bindingRows("Guitar", GameAction.guitar)
-        r += bindingRows("Drums", GameAction.drums)
-        r += bindingRows("Menus", GameAction.menu)
+        r.append(.pick("group", "Bindings", "Show", options: BindingGroup.allCases, label: { $0.title }, selection: $group))
+        r += bindingRows(group.title, group.actions)
         r.append(NavRow(id: "reset", section: "Reset", title: resetArmed ? "Press again to replace every binding" : "Reset to defaults", kind: .button(destructive: true) {
             guard resetArmed else { resetArmed = true; return }
             resetArmed = false
@@ -67,8 +82,8 @@ struct ControlsView: View {
     }
 
     var body: some View {
-        NavForm(rows: rows, onBack: { input.cancelCapture(); app.screen = .menu })
-            .screenChrome("Controls") { input.cancelCapture(); app.screen = .menu }
+        NavForm(rows: rows, onBack: { input.cancelCapture(); onBack() })
+            .screenChrome("Controls", back: "Settings") { input.cancelCapture(); onBack() }
             .overlay {
                 if let a = input.capturing {
                     VStack(spacing: 14) {
