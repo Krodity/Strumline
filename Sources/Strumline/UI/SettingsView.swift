@@ -10,8 +10,8 @@ import StrumCore
 struct SettingsView: View {
     @EnvironmentObject var app: AppModel
     @State private var page: SettingsPage?
-    /// Reset takes two presses: the first arms it.
-    @State private var resetArmed = false
+    /// The reset confirmation (type-the-code) sheet.
+    @State private var confirmingReset = false
 
     private var rows: [NavRow] {
         let s = app.settings
@@ -25,12 +25,8 @@ struct SettingsView: View {
             open(.touch, s.showTouchControls ? s.touchMode.displayName : "On-screen controls off"),
             open(.custom, "Highway images, backgrounds, wallpaper"),
             open(.controls, "Bindings for keyboard, controllers and kits"),
-            NavRow(id: "reset", section: "Reset", title: resetArmed ? "Press again to reset all settings" : "Reset settings", detail: resetArmed ? nil : "Modifiers and controls are kept", symbol: "arrow.counterclockwise", kind: .button(destructive: true) {
-                guard resetArmed else { resetArmed = true; return }
-                resetArmed = false
-                let mods = app.settings.modifiers
-                app.settings = GameSettings()
-                app.settings.modifiers = mods
+            NavRow(id: "reset", section: "Reset", title: "Reset settings…", detail: "Asks you to confirm with a code", symbol: "arrow.counterclockwise", kind: .button(destructive: true) {
+                confirmingReset = true
             }),
         ]
     }
@@ -44,6 +40,9 @@ struct SettingsView: View {
                 } else {
                     SettingsPageView(page: p, onBack: { page = nil })
                 }
+            }
+            .sheet(isPresented: $confirmingReset) {
+                ResetSettingsSheet().environmentObject(app)
             }
     }
 }
@@ -182,6 +181,94 @@ struct SettingsPageView: View {
                 }
             }
             .id(refresh)
+    }
+}
+
+/// Double check before resetting settings: the player has to type a random
+/// code shown on screen, so it can't happen by a stray tap or button press.
+struct ResetSettingsSheet: View {
+    @EnvironmentObject var app: AppModel
+    @Environment(\.dismiss) private var dismiss
+    /// New every time the sheet opens. No look-alikes (0/O, 1/I/L).
+    @State private var code = ResetSettingsSheet.makeCode()
+    @State private var typed = ""
+    @FocusState private var fieldFocused: Bool
+
+    static func makeCode(length: Int = 6) -> String {
+        let alphabet = Array("ABCDEFGHJKMNPQRSTUVWXYZ23456789")
+        return String((0..<length).map { _ in alphabet.randomElement()! })
+    }
+
+    private var matches: Bool {
+        typed.trimmingCharacters(in: .whitespaces).uppercased() == code
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Label("This resets every setting to its default.", systemImage: "exclamationmark.triangle.fill")
+                        .font(Theme.Fonts.heading)
+                        .foregroundStyle(Palette.yellow)
+                    Card {
+                        VStack(alignment: .leading, spacing: 6) {
+                            SectionLabel("Reset")
+                            Text("Highway, timing and calibration, volumes, touch, backgrounds and wallpaper.")
+                            SectionLabel("Kept").padding(.top, 6)
+                            Text("Modifiers, controller and keyboard bindings, players, your library and scores.")
+                        }
+                        .font(.subheadline)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Type this code to confirm:").font(.subheadline).foregroundStyle(.secondary)
+                        Text(code)
+                            .font(.system(size: 34, weight: .heavy, design: .monospaced))
+                            .kerning(6)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(Theme.Surface.card))
+                            .accessibilityLabel("Code " + code.map(String.init).joined(separator: " "))
+                        TextField("Code", text: $typed)
+                            .font(.system(size: 22, weight: .semibold, design: .monospaced))
+                            .multilineTextAlignment(.center)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+                            .focused($fieldFocused)
+                            .submitLabel(.done)
+                            .onSubmit { if matches { reset() } }
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(Theme.Surface.control))
+                            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.medium)
+                                .stroke(matches ? Palette.green : typed.isEmpty ? .clear : Theme.Surface.stroke, lineWidth: 2))
+                    }
+                    Button(role: .destructive) { reset() } label: {
+                        Label("Reset settings", systemImage: "arrow.counterclockwise")
+                            .font(Theme.Fonts.button)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(RoundedRectangle(cornerRadius: Theme.Radius.large).fill(matches ? Palette.red.opacity(0.85) : Theme.Surface.control))
+                            .foregroundStyle(matches ? .white : .secondary)
+                    }
+                    .disabled(!matches)
+                }
+                .padding(20)
+            }
+            .navigationTitle("Reset Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+        .onAppear { fieldFocused = true }
+        // Back / red on a controller cancels; nothing else can confirm.
+        .menuNavigation { nav in if nav == .back { dismiss() } }
+    }
+
+    private func reset() {
+        guard matches else { return }
+        let mods = app.settings.modifiers
+        app.settings = GameSettings()
+        app.settings.modifiers = mods
+        app.flushSettings()
+        dismiss()
     }
 }
 
