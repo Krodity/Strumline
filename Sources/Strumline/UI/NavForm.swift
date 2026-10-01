@@ -36,7 +36,6 @@ struct NavForm: View {
     var rows: [NavRow]
     var onBack: () -> Void
     @State private var focus: String?
-    @State private var previousHandler: ((Set<GameAction>) -> Void)?
     @State private var scroller: ScrollViewProxy?
 
     var body: some View {
@@ -57,13 +56,9 @@ struct NavForm: View {
                     }
                 }
             }
-            .onAppear {
-                scroller = proxy
-                previousHandler = InputManager.shared.menuHandler
-                install()
-            }
-            .onDisappear { InputManager.shared.menuHandler = previousHandler }
+            .onAppear { scroller = proxy }
         }
+        .menuNavigation { nav in navigate(nav) }
     }
 
     private var sections: [String] {
@@ -100,27 +95,24 @@ struct NavForm: View {
         }
     }
 
-    private func install() {
-        InputManager.shared.menuHandler = { a in
-            guard let nav = MenuNav(a) else { return }
-            let nav_rows = rows.filter(\.focusable)
-            guard !nav_rows.isEmpty else { if nav == .back { onBack() }; return }
-            let idx = focus.flatMap { f in nav_rows.firstIndex { $0.id == f } }
-            func move(_ d: Int) {
-                let i = idx.map { max(0, min(nav_rows.count - 1, $0 + d)) } ?? 0
-                focus = nav_rows[i].id
-                withAnimation(.easeOut(duration: 0.15)) { scroller?.scrollTo(nav_rows[i].id, anchor: .center) }
-            }
-            switch nav {
-            case .up: move(-1)
-            case .down: move(1)
-            case .pageUp: move(-6)
-            case .pageDown: move(6)
-            case .back: onBack()
-            case .left, .right, .confirm:
-                guard let i = idx else { move(0); return }
-                adjust(nav_rows[i], nav)
-            }
+    private func navigate(_ nav: MenuNav) {
+        let navRows = rows.filter(\.focusable)
+        guard !navRows.isEmpty else { if nav == .back { onBack() }; return }
+        let idx = focus.flatMap { f in navRows.firstIndex { $0.id == f } }
+        func move(_ d: Int) {
+            let i = idx.map { max(0, min(navRows.count - 1, $0 + d)) } ?? 0
+            focus = navRows[i].id
+            withAnimation(.easeOut(duration: 0.15)) { scroller?.scrollTo(navRows[i].id, anchor: .center) }
+        }
+        switch nav {
+        case .up: move(-1)
+        case .down: move(1)
+        case .pageUp: move(-6)
+        case .pageDown: move(6)
+        case .back: onBack()
+        case .left, .right, .confirm:
+            guard let i = idx else { move(0); return }
+            adjust(navRows[i], nav)
         }
     }
 

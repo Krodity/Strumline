@@ -82,36 +82,30 @@ struct MainMenuView: View {
             }
             VStack { Spacer(); PlayerBar() }
         }
-        .onAppear {
-            app.preview.stop()
-            installHandler()
-        }
-        .onChange(of: app.screen) { _, s in if s == .menu { installHandler() } }
+        .onAppear { app.preview.stop() }
+        .menuNavigation { nav in navigate(nav) }
     }
 
     /// ↑↓ through the menu; ↓ past the end moves into the player bar where
     /// ←→ picks a player and green opens their settings (or joins).
-    private func installHandler() {
-        InputManager.shared.menuHandler = { a in
-            guard let nav = MenuNav(a) else { return }
-            if let slot = app.playerBarFocus {
-                let slots = min(app.players.count + 1, AppModel.maxPlayers)
-                switch nav {
-                case .left: app.playerBarFocus = max(0, slot - 1)
-                case .right: app.playerBarFocus = min(slots - 1, slot + 1)
-                case .up, .back: app.playerBarFocus = nil
-                case .confirm: app.playerBarOpen = slot
-                default: break
-                }
-                return
-            }
+    private func navigate(_ nav: MenuNav) {
+        if let slot = app.playerBarFocus {
+            let slots = min(app.players.count + 1, AppModel.maxPlayers)
             switch nav {
-            case .down:
-                if selection == items.count - 1 { app.playerBarFocus = 0 } else { selection += 1 }
-            case .up: selection = max(0, selection - 1)
-            case .confirm: app.screen = items[selection].2
+            case .left: app.playerBarFocus = max(0, slot - 1)
+            case .right: app.playerBarFocus = min(slots - 1, slot + 1)
+            case .up, .back: app.playerBarFocus = nil
+            case .confirm: app.playerBarOpen = slot
             default: break
             }
+            return
+        }
+        switch nav {
+        case .down:
+            if selection == items.count - 1 { app.playerBarFocus = 0 } else { selection += 1 }
+        case .up: selection = max(0, selection - 1)
+        case .confirm: app.screen = items[selection].2
+        default: break
         }
     }
 }

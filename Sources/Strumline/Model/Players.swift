@@ -95,6 +95,8 @@ extension AppModel {
 struct PlayerBar: View {
     @EnvironmentObject var app: AppModel
     @State private var editing: Int?
+    /// Player who chose Leave in their sheet; removed in the sheet's onDismiss.
+    @State private var leaving: Int?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -130,8 +132,12 @@ struct PlayerBar: View {
             if i >= app.players.count { app.addPlayer(device: nil) }
             editing = min(i, app.players.count - 1)
         }
-        .sheet(item: Binding(get: { editing.map { EditIndex(id: $0) } }, set: { editing = $0?.id })) { e in
-            PlayerSettingsSheet(index: e.id).environmentObject(app)
+        .sheet(item: Binding(get: { editing.map { EditIndex(id: $0) } }, set: { editing = $0?.id }), onDismiss: {
+            // A player who chose Leave is removed only once their sheet is gone
+            // (removing the slot while the sheet still read it crashed).
+            if let i = leaving { leaving = nil; app.removePlayer(i) }
+        }) { e in
+            PlayerSettingsSheet(index: e.id, onLeave: { leaving = $0 }).environmentObject(app)
         }
     }
 
@@ -179,6 +185,8 @@ struct PlayerSettingsSheet: View {
     @ObservedObject private var input = InputManager.shared
     @Environment(\.dismiss) private var dismiss
     let index: Int
+    /// Marks this player to be removed when the sheet closes.
+    var onLeave: (Int) -> Void = { _ in }
     @State private var showMods = false
 
     private var valid: Bool { index < app.players.count }
@@ -210,10 +218,8 @@ struct PlayerSettingsSheet: View {
         ]
         if index > 0 {
             r.append(NavRow(id: "leave", section: "Leave", title: "Leave", kind: .button(destructive: true) {
-                // Close first; removing while this sheet still reads the slot crashed.
-                let i = index
+                onLeave(index)
                 dismiss()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { app.removePlayer(i) }
             }))
         }
         r.append(NavRow(id: "done", section: index > 0 ? "Leave" : "Modifiers", title: "Done", kind: .button(destructive: false) { dismiss() }))

@@ -12,6 +12,9 @@ struct SongSetupPanel: View {
     /// Controller/keyboard focus: ↑↓ instrument, ←→ difficulty, confirm plays.
     var focused = false
     var onClose: () -> Void = {}
+    /// In a sheet: hands over the "start the song" action to run once the
+    /// sheet has finished closing (the game screen replaces the song list).
+    var onPlayAfterClose: ((@escaping () -> Void) -> Void)? = nil
 
     @State private var instrument: Instrument = .guitar
     @State private var difficulty: Difficulty = .expert
@@ -88,10 +91,8 @@ struct SongSetupPanel: View {
                 .onAppear { scroller = proxy }
             }
         }
-        .onChange(of: focused) { _, f in if f { installMenuHandler() } }
-        .onChange(of: showMods) { _, open in if !open && focused { installMenuHandler() } }
+        .menuNavigation(enabled: focused) { nav in navigate(nav) }
         .onAppear {
-            if focused { installMenuHandler() }
             let insts = song.instruments
             select(insts.contains(app.settings.lastInstrument) ? app.settings.lastInstrument : (insts.first ?? .guitar))
             if practice { loadSections() }
@@ -240,11 +241,9 @@ struct SongSetupPanel: View {
         guard !song.difficulties(for: instrument).isEmpty else { return }
         let p = practice ? PracticeRange(startSection: startSection, endSection: max(startSection, endSection)) : nil
         let (i, d) = (instrument, difficulty)
-        if inSheet {
+        if inSheet, let defer_ = onPlayAfterClose {
+            defer_ { app.play(song: song, instrument: i, difficulty: d, practice: p) }
             onClose()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                app.play(song: song, instrument: i, difficulty: d, practice: p)
-            }
         } else {
             app.play(song: song, instrument: i, difficulty: d, practice: p)
         }
@@ -252,31 +251,28 @@ struct SongSetupPanel: View {
 
     /// ↑↓ moves between rows, ←→ changes the highlighted row, green
     /// selects (plays on Play, opens Modifiers), red closes.
-    private func installMenuHandler() {
-        InputManager.shared.menuHandler = { a in
-            guard let nav = MenuNav(a) else { return }
-            let rows = focusRows
-            let idx = rows.firstIndex(of: focusRow) ?? rows.count - 1
-            switch nav {
-            case .up, .down:
-                let n = max(0, min(rows.count - 1, idx + (nav == .down ? 1 : -1)))
-                focusRow = rows[n]
-                let target = [FocusRow.instrument, .difficulty, .kit].contains(focusRow) ? "p1" : focusRow == .play ? "p3" : "p2"
-                withAnimation { scroller?.scrollTo(target, anchor: .center) }
-            case .left, .right:
-                adjust(focusRow, by: nav == .right ? 1 : -1)
-            case .confirm:
-                switch focusRow {
-                case .play: start()
-                case .modifiers: showMods = true
-                default:
-                    // Accept this row and move on toward Play.
-                    focusRow = rows[min(rows.count - 1, idx + 1)]
-                }
-            case .back: onClose()
-            case .pageDown: turnPage(1)
-            case .pageUp: turnPage(-1)
+    private func navigate(_ nav: MenuNav) {
+        let rows = focusRows
+        let idx = rows.firstIndex(of: focusRow) ?? rows.count - 1
+        switch nav {
+        case .up, .down:
+            let n = max(0, min(rows.count - 1, idx + (nav == .down ? 1 : -1)))
+            focusRow = rows[n]
+            let target = [FocusRow.instrument, .difficulty, .kit].contains(focusRow) ? "p1" : focusRow == .play ? "p3" : "p2"
+            withAnimation { scroller?.scrollTo(target, anchor: .center) }
+        case .left, .right:
+            adjust(focusRow, by: nav == .right ? 1 : -1)
+        case .confirm:
+            switch focusRow {
+            case .play: start()
+            case .modifiers: showMods = true
+            default:
+                // Accept this row and move on toward Play.
+                focusRow = rows[min(rows.count - 1, idx + 1)]
             }
+        case .back: onClose()
+        case .pageDown: turnPage(1)
+        case .pageUp: turnPage(-1)
         }
     }
 

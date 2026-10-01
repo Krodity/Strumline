@@ -39,20 +39,20 @@ public enum AudioDecoders {
 // MARK: - Vorbis
 
 public final class VorbisDecoder: AudioDecoder {
-    private let bytes: UnsafeMutableRawPointer
+    /// Kept alive for stb_vorbis, which reads straight from it. NSData's
+    /// `bytes` stay put for its lifetime, so a memory-mapped stem isn't
+    /// copied into a second buffer.
+    private let storage: NSData
     private let v: OpaquePointer
     public let sampleRate: Double
     public let channels: Int
     public let lengthFrames: Int?
 
     public init?(data: Data) {
-        bytes = .allocate(byteCount: data.count, alignment: 16)
-        data.copyBytes(to: bytes.assumingMemoryBound(to: UInt8.self), count: data.count)
+        storage = data as NSData
         var err: Int32 = 0
-        guard let v = stb_vorbis_open_memory(bytes.assumingMemoryBound(to: UInt8.self), Int32(data.count), &err, nil) else {
-            bytes.deallocate()
-            return nil
-        }
+        guard data.count < Int(Int32.max),
+              let v = stb_vorbis_open_memory(storage.bytes.assumingMemoryBound(to: UInt8.self), Int32(storage.length), &err, nil) else { return nil }
         self.v = v
         let info = stb_vorbis_get_info(v)
         sampleRate = Double(info.sample_rate)
@@ -61,10 +61,7 @@ public final class VorbisDecoder: AudioDecoder {
         lengthFrames = len > 0 ? len : nil
     }
 
-    deinit {
-        stb_vorbis_close(v)
-        bytes.deallocate()
-    }
+    deinit { stb_vorbis_close(v) }
 
     public func read(_ out: UnsafeMutablePointer<Float>, frames: Int) -> Int {
         Int(stb_vorbis_get_samples_float_interleaved(v, Int32(channels), out, Int32(frames * channels)))
@@ -305,23 +302,26 @@ public final class WavDecoder: AudioDecoder {
     public var lengthFrames: Int? { dataLen / (bits / 8 * channels) }
 
     public init?(data: Data) {
-        let b = [UInt8](data)
-        func u32(_ p: Int) -> Int { Int(b[p]) | Int(b[p + 1]) << 8 | Int(b[p + 2]) << 16 | Int(b[p + 3]) << 24 }
-        func u16(_ p: Int) -> Int { Int(b[p]) | Int(b[p + 1]) << 8 }
-        guard b.count > 44, Array(b[8..<12]) == Array("WAVE".utf8) else { return nil }
+        // Read the header in place rather than copying the whole file.
+        let base = data.startIndex
+        let count = data.count
+        func byte(_ p: Int) -> Int { Int(data[base + p]) }
+        func u32(_ p: Int) -> Int { byte(p) | byte(p + 1) << 8 | byte(p + 2) << 16 | byte(p + 3) << 24 }
+        func u16(_ p: Int) -> Int { byte(p) | byte(p + 1) << 8 }
+        guard count > 44, data[(base + 8)..<(base + 12)].elementsEqual("WAVE".utf8) else { return nil }
         var p = 12
         var fmt: (Int, Int, Int, Int)? = nil  // format, channels, rate, bits
         var dStart = 0, dLen = 0
-        while p + 8 <= b.count {
-            let id = String(decoding: b[p..<(p + 4)], as: UTF8.self)
+        while p + 8 <= count {
+            let id = String(decoding: data[(base + p)..<(base + p + 4)], as: UTF8.self)
             let len = u32(p + 4)
-            if id == "fmt ", p + 24 <= b.count {
+            if id == "fmt ", p + 24 <= count {
                 var format = u16(p + 8)
-                if format == 0xFFFE, p + 34 <= b.count { format = u16(p + 32) }
+                if format == 0xFFFE, p + 34 <= count { format = u16(p + 32) }
                 fmt = (format, u16(p + 10), u32(p + 12), u16(p + 22))
             } else if id == "data" {
                 dStart = p + 8
-                dLen = min(len, b.count - dStart)
+                dLen = min(len, count - dStart)
                 break
             }
             p += 8 + len + (len & 1)

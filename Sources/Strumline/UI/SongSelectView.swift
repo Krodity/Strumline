@@ -9,6 +9,8 @@ struct SongSelectView: View {
     @State private var showSetup = false
     /// Split layout (iPad): the setup panel has controller focus.
     @State private var panelFocused = false
+    /// Play requested from the setup sheet; runs when the sheet is gone.
+    @State private var playAfterSheet: (() -> Void)?
 
     var body: some View {
         GeometryReader { geo in
@@ -38,19 +40,20 @@ struct SongSelectView: View {
                     PlayerBar()
                 }
             }
-            .sheet(isPresented: Binding(get: { showSetup && !wide }, set: { showSetup = $0 })) {
+            .sheet(isPresented: Binding(get: { showSetup && !wide }, set: { showSetup = $0 }), onDismiss: {
+                let play = playAfterSheet
+                playAfterSheet = nil
+                play?()
+            }) {
                 if let s = selected {
-                    SongSetupPanel(song: s, practice: practice, inSheet: true, focused: true, onClose: { showSetup = false })
+                    SongSetupPanel(song: s, practice: practice, inSheet: true, focused: true, onClose: { showSetup = false },
+                                   onPlayAfterClose: { playAfterSheet = $0 })
                         .presentationDetents([.large])
                         .environmentObject(app)
                 }
             }
-            .onAppear { installMenuHandler(list, wide: wide) }
-            .onChange(of: query) { _, _ in installMenuHandler(app.sortedSongs(filter: query), wide: wide) }
-            .onChange(of: app.songs) { _, _ in installMenuHandler(app.sortedSongs(filter: query), wide: wide) }
-            .onChange(of: showSetup) { _, open in if !open { installMenuHandler(app.sortedSongs(filter: query), wide: wide) } }
-            .onChange(of: panelFocused) { _, f in if !f { installMenuHandler(app.sortedSongs(filter: query), wide: wide) } }
-            .onChange(of: app.settings.sort) { _, _ in installMenuHandler(app.sortedSongs(filter: query), wide: wide) }
+            // The list has input unless the setup panel/sheet has taken it.
+            .menuNavigation(enabled: wide ? !panelFocused : !showSetup) { nav in navigate(nav, list: list, wide: wide) }
         }
         .onChange(of: selected) { _, s in
             app.preview.volume = app.settings.previewVolume
@@ -67,22 +70,19 @@ struct SongSelectView: View {
         }
     }
 
-    private func installMenuHandler(_ list: [SongEntry], wide: Bool) {
-        InputManager.shared.menuHandler = { a in
-            guard let nav = MenuNav(a) else { return }
-            if nav == .back { app.preview.stop(); app.screen = .menu; return }
-            guard !list.isEmpty else { return }
-            let idx = selected.flatMap { s in list.firstIndex { $0.path == s.path } } ?? -1
-            switch nav {
-            case .down: selected = list[min(list.count - 1, idx + 1)]
-            case .up: selected = list[max(0, idx - 1)]
-            case .right, .pageDown: selected = list[min(list.count - 1, idx + 10)]
-            case .left, .pageUp: selected = list[max(0, idx - 10)]
-            case .confirm:
-                if selected == nil { selected = list[0]; return }
-                if wide { panelFocused = true } else { showSetup = true }
-            case .back: break
-            }
+    private func navigate(_ nav: MenuNav, list: [SongEntry], wide: Bool) {
+        if nav == .back { app.preview.stop(); app.screen = .menu; return }
+        guard !list.isEmpty else { return }
+        let idx = selected.flatMap { s in list.firstIndex { $0.path == s.path } } ?? -1
+        switch nav {
+        case .down: selected = list[min(list.count - 1, idx + 1)]
+        case .up: selected = list[max(0, idx - 1)]
+        case .right, .pageDown: selected = list[min(list.count - 1, idx + 10)]
+        case .left, .pageUp: selected = list[max(0, idx - 10)]
+        case .confirm:
+            if selected == nil { selected = list[0]; return }
+            if wide { panelFocused = true } else { showSetup = true }
+        case .back: break
         }
     }
 

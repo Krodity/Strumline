@@ -56,16 +56,13 @@ struct ResultsView: View {
                 }
             }
         }
-        .onAppear {
-            InputManager.shared.menuHandler = { a in
-                switch MenuNav(a) {
-                case .left, .up, .right, .down: choice = 1 - choice
-                case .confirm: if choice == 0 { app.restartCurrent() } else { app.screen = .songs(practice: false) }
-                case .back: app.screen = .songs(practice: false)
-                case .pageDown: turnPage(1)
-                case .pageUp: turnPage(-1)
-                case nil: break
-                }
+        .menuNavigation { nav in
+            switch nav {
+            case .left, .up, .right, .down: choice = 1 - choice
+            case .confirm: if choice == 0 { app.restartCurrent() } else { app.screen = .songs(practice: false) }
+            case .back: app.screen = .songs(practice: false)
+            case .pageDown: turnPage(1)
+            case .pageUp: turnPage(-1)
             }
         }
     }

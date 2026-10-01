@@ -249,5 +249,45 @@ do {
     mixer.stop()
 }
 
+// P7: the WAV header is read in place (no copy), including from a Data
+// slice whose startIndex isn't 0.
+do {
+    func le(_ v: Int, _ n: Int) -> [UInt8] { (0..<n).map { UInt8(truncatingIfNeeded: v >> (8 * $0)) } }
+    let frames = 1000
+    var pcm: [UInt8] = []
+    for i in 0..<frames { pcm += le(i * 16, 2) + le(-i * 16, 2) }  // stereo ramp, L = -R
+    let fmt = Array("fmt ".utf8) + le(16, 4) + le(1, 2) + le(2, 2) + le(44100, 4) + le(44100 * 4, 4) + le(4, 2) + le(16, 2)
+    let body = Array("WAVE".utf8) + fmt + Array("data".utf8) + le(pcm.count, 4) + pcm
+    let wav = Array("RIFF".utf8) + le(body.count, 4) + body
+    let padded = Data([0xAA, 0xBB, 0xCC] + wav)
+    for (label, d) in [("whole", Data(wav)), ("slice", padded[3...])] {
+        guard let dec = AudioDecoders.open(data: d) else { fail("P7 WAV (\(label)) not recognised"); continue }
+        var out = [Float](repeating: 0, count: 2 * frames)
+        let n = out.withUnsafeMutableBufferPointer { dec.read($0.baseAddress!, frames: frames) }
+        let ok = n == frames && dec.channels == 2 && dec.sampleRate == 44100
+            && abs(out[2 * 500] - Float(500 * 16) / 32768) < 1e-6 && abs(out[2 * 500 + 1] + Float(500 * 16) / 32768) < 1e-6
+        if ok { print("  ✓ P7 WAV (\(label)): \(n) frames decoded correctly") } else { fail("P7 WAV (\(label)): n \(n) ch \(dec.channels) sr \(dec.sampleRate) s500 \(out[1000])") }
+    }
+}
+
+// Q4: saved settings decode over defaults — missing keys keep defaults,
+// a key that no longer decodes resets alone, the rest of the save survives.
+do {
+    struct Saved: Codable, Equatable {
+        var speed = 1.0
+        var lefty = false
+        var mods = Modifiers()
+        var added = "new default"  // a field newer than the save
+    }
+    let json = #"{"speed": 1.5, "lefty": true, "mods": {"mirror": true, "modchart": "notACase", "songSpeed": 0.75}}"#
+    let plain = try? JSONDecoder().decode(Saved.self, from: Data(json.utf8))
+    if let s = SavedState.decode(Data(json.utf8), over: Saved()) {
+        let ok = s.speed == 1.5 && s.lefty && s.mods.mirror && s.mods.songSpeed == 0.75 && s.mods.modchart == .off && s.mods.twoXKick && s.added == "new default"
+        let line = "Q4 settings over defaults: speed \(s.speed) lefty \(s.lefty) mirror \(s.mods.mirror) modchart \(s.mods.modchart) added \"\(s.added)\" (plain Codable: \(plain == nil ? "fails" : "ok"))"
+        if ok { print("  ✓ " + line) } else { fail(line) }
+    } else { fail("Q4 settings over defaults: decode failed") }
+    if SavedState.decode(Data("[1,2]".utf8), over: Saved()) == nil { print("  ✓ Q4 non-object save rejected") } else { fail("Q4 non-object save accepted") }
+}
+
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) FAILURE(S)")
 exit(failures == 0 ? 0 : 1)

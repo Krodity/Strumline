@@ -35,6 +35,17 @@ struct HighwayGeometry {
     /// canvas ignores the safe area, so HUD layout offsets by these.
     var safe: UIEdgeInsets = .zero
 
+    /// Safe-area insets, re-read only when the layout size changes
+    /// (rotation): `make` runs every frame for every player.
+    private static var insetCache: (size: CGSize, insets: UIEdgeInsets)?
+    static func windowInsets(for size: CGSize) -> UIEdgeInsets {
+        if let c = insetCache, c.size == size { return c.insets }
+        let insets = windowInsets
+        // Zero can mean "no window yet": don't pin that.
+        if insets != .zero { insetCache = (size, insets) }
+        return insets
+    }
+
     static var windowInsets: UIEdgeInsets {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         return scene?.windows.first(where: \.isKeyWindow)?.safeAreaInsets ?? scene?.windows.first?.safeAreaInsets ?? .zero
@@ -63,7 +74,7 @@ struct HighwayGeometry {
         }
         width *= CGFloat(max(0.5, min(1.5, settings.highwayScale)))
         width = min(width, size.width * 0.99)
-        let safe = windowInsets
+        let safe = windowInsets(for: size)
         let len = CGFloat(max(0.5, min(10, settings.highwayLength)))
         // The far end of the highway starts below the Dynamic Island.
         let ceiling = safe.top + (landscape ? 8 : 70)
@@ -162,7 +173,11 @@ struct HighwayRenderer {
 
         // Drum fills: tint the highway while an activation is available.
         if isDrums && run.engine.showFills {
-            for c in run.track.chords where c.activation && c.time > t && c.time - t < visibleTime {
+            // Only the chords on screen (binary search, not a full scan per frame).
+            let chords = run.track.chords
+            var lo = 0, hi = chords.count
+            while lo < hi { let m = (lo + hi) / 2; if chords[m].time <= t { lo = m + 1 } else { hi = m } }
+            for c in chords[lo...].prefix(while: { $0.time - t < visibleTime }) where c.activation {
                 if let f = run.track.fills.first(where: { abs($0.endTime - c.time) < 0.001 || ($0.startTime <= c.time && $0.endTime >= c.time) }) {
                     let d0 = CGFloat((max(t, f.startTime) - t) / visibleTime), d1 = CGFloat((c.time - t) / visibleTime)
                     var r = Path()

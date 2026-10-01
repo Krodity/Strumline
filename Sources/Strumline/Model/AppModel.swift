@@ -42,12 +42,28 @@ enum Screen: Equatable {
 final class AppModel: ObservableObject {
     @Published var settings = GameSettings.load() {
         didSet {
-            settings.save()
+            scheduleSettingsSave()
             AudioEngine.shared.sfxVolume = Float(settings.sfxVolume)
         }
     }
+    /// Sliders change settings many times a second; write them to disk once
+    /// they settle (and right away when the app leaves the foreground).
+    private var settingsSave: DispatchWorkItem?
+    private func scheduleSettingsSave() {
+        settingsSave?.cancel()
+        let item = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.flushSettings() } }
+        settingsSave = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
+    }
+    func flushSettings() {
+        settingsSave?.cancel()
+        settingsSave = nil
+        settings.save()
+    }
     @Published var screen: Screen = .menu
-    @Published private(set) var songs: [SongEntry] = []
+    @Published private(set) var songs: [SongEntry] = [] {
+        didSet { songsVersion += 1 }
+    }
     @Published private(set) var scanning = false
     @Published private(set) var scanStatus = ""
     @Published private(set) var scanErrors: [String] = []
@@ -112,6 +128,9 @@ final class AppModel: ObservableObject {
         }
         if let d = UserDefaults.standard.data(forKey: "players.v1"), let p = try? JSONDecoder().decode([PlayerProfile].self, from: d), !p.isEmpty {
             players = p
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.flushSettings() }
         }
         InputManager.shared.joinHandler = { [weak self] device in
             MainActor.assumeIsolated { self?.join(device: device) ?? false }
@@ -306,26 +325,50 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Bumped whenever `songs` changes; keys the sorted-list cache.
+    private var songsVersion = 0
+    private var sortCache: (version: Int, sort: SongSort, query: String, list: [SongEntry])?
+
+    /// The song list filtered and sorted for display. Views call this from
+    /// `body`, which re-runs on every published change (scan progress ticks
+    /// several times a second), so the result is cached until the songs,
+    /// the sort or the query actually change.
     func sortedSongs(filter: String) -> [SongEntry] {
         let q = filter.trimmingCharacters(in: .whitespaces).lowercased()
+        let sort = settings.sort
+        if let c = sortCache, c.version == songsVersion, c.sort == sort, c.query == q { return c.list }
         var list = songs
         if !q.isEmpty {
             list = list.filter { s in
                 [s.name, s.artist, s.album, s.genre, s.charter, s.year].contains { $0.lowercased().contains(q) }
             }
         }
+        // Sort keys are built once per song, not on every comparison.
         func k(_ s: String) -> String { s.lowercased().replacingOccurrences(of: "the ", with: "", options: .anchored) }
-        switch settings.sort {
-        case .title: list.sort { k($0.name) < k($1.name) }
-        case .artist: list.sort { (k($0.artist), k($0.name)) < (k($1.artist), k($1.name)) }
-        case .album: list.sort { (k($0.album), $0.albumTrack, k($0.name)) < (k($1.album), $1.albumTrack, k($1.name)) }
-        case .genre: list.sort { (k($0.genre), k($0.artist), k($0.name)) < (k($1.genre), k($1.artist), k($1.name)) }
-        case .year: list.sort { ($0.year, k($0.artist)) < ($1.year, k($1.artist)) }
-        case .charter: list.sort { (k($0.charter), k($0.name)) < (k($1.charter), k($1.name)) }
-        case .length: list.sort { $0.lengthMs < $1.lengthMs }
-        case .playlist: list.sort { (k(folderName($0)), $0.playlistTrack, k($0.name)) < (k(folderName($1)), $1.playlistTrack, k($1.name)) }
-        case .recent: list.sort { $0.modified > $1.modified }
+        struct Keyed { var e: SongEntry; var a: String; var b: String; var n: Int }
+        let keyed: [Keyed] = list.map { s in
+            switch sort {
+            case .title: return Keyed(e: s, a: k(s.name), b: "", n: 0)
+            case .artist: return Keyed(e: s, a: k(s.artist), b: k(s.name), n: 0)
+            case .album: return Keyed(e: s, a: k(s.album), b: k(s.name), n: s.albumTrack)
+            case .genre: return Keyed(e: s, a: k(s.genre), b: k(s.artist) + "\u{0}" + k(s.name), n: 0)
+            case .year: return Keyed(e: s, a: s.year, b: k(s.artist), n: 0)
+            case .charter: return Keyed(e: s, a: k(s.charter), b: k(s.name), n: 0)
+            case .length: return Keyed(e: s, a: "", b: "", n: s.lengthMs)
+            case .playlist: return Keyed(e: s, a: k(folderName(s)), b: k(s.name), n: s.playlistTrack)
+            case .recent: return Keyed(e: s, a: "", b: "", n: 0)
+            }
         }
+        let sorted: [Keyed]
+        switch sort {
+        case .recent: sorted = keyed.sorted { $0.e.modified > $1.e.modified }
+        case .length: sorted = keyed.sorted { $0.n < $1.n }
+        // Album and folder order by track number before title.
+        case .album, .playlist: sorted = keyed.sorted { ($0.a, $0.n, $0.b) < ($1.a, $1.n, $1.b) }
+        default: sorted = keyed.sorted { ($0.a, $0.b) < ($1.a, $1.b) }
+        }
+        list = sorted.map(\.e)
+        sortCache = (songsVersion, sort, q, list)
         return list
     }
 

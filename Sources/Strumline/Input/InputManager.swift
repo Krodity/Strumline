@@ -49,9 +49,6 @@ final class InputManager: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// Menu navigation outside gameplay (main thread). Receives every
-    /// action bound to one physical press at once.
-    var menuHandler: ((Set<GameAction>) -> Void)?
     /// Start pressed in a menu on some device: return true if that joined a
     /// new player (then it isn't also a menu action).
     var joinHandler: ((String) -> Bool)?
@@ -174,7 +171,8 @@ final class InputManager: ObservableObject, @unchecked Sendable {
         guard !actions.isEmpty else { return }
         DispatchQueue.main.async {
             if actions.contains(.pause), !actions.contains(.menuBack), let j = self.joinHandler, j(device) { return }
-            self.menuHandler?(actions)
+            // Every action bound to one physical press arrives together.
+            MainActor.assumeIsolated { MenuFocus.shared.dispatch(actions) }
         }
     }
 

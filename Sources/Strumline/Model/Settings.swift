@@ -61,27 +61,12 @@ struct GameSettings: Codable, Equatable {
 
     static let key = "settings.v1"
 
-    /// Decodes older saves: missing keys keep their defaults.
     init() {}
-    init(from decoder: Decoder) throws {
-        let d = GameSettings()
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        func v<T: Decodable>(_ k: CodingKeys, _ def: T) -> T { (try? c.decodeIfPresent(T.self, forKey: k)) ?? nil ?? def }
-        noteSpeed = v(.noteSpeed, d.noteSpeed); highwayLength = v(.highwayLength, d.highwayLength); highwayScale = v(.highwayScale, d.highwayScale)
-        leftyFlip = v(.leftyFlip, d.leftyFlip); showHitTiming = v(.showHitTiming, d.showHitTiming); showFPS = v(.showFPS, d.showFPS)
-        audioOffsetMs = v(.audioOffsetMs, d.audioOffsetMs); videoOffsetMs = v(.videoOffsetMs, d.videoOffsetMs); hitWindowMs = v(.hitWindowMs, d.hitWindowMs)
-        musicVolume = v(.musicVolume, d.musicVolume); instrumentVolume = v(.instrumentVolume, d.instrumentVolume); sfxVolume = v(.sfxVolume, d.sfxVolume)
-        previewVolume = v(.previewVolume, d.previewVolume); muteOnMiss = v(.muteOnMiss, d.muteOnMiss); missSounds = v(.missSounds, d.missSounds)
-        drumMode = v(.drumMode, d.drumMode); touchMode = v(.touchMode, d.touchMode); showTouchControls = v(.showTouchControls, d.showTouchControls)
-        tiltStarPower = v(.tiltStarPower, d.tiltStarPower); backgroundDim = v(.backgroundDim, d.backgroundDim); showVideos = v(.showVideos, d.showVideos)
-        lastInstrument = v(.lastInstrument, d.lastInstrument); lastDifficulty = v(.lastDifficulty, d.lastDifficulty)
-        modifiers = v(.modifiers, d.modifiers); sort = v(.sort, d.sort); practiceSpeed = v(.practiceSpeed, d.practiceSpeed)
-        highwayImage = v(.highwayImage, d.highwayImage); gameBackground = v(.gameBackground, d.gameBackground)
-        customBackground = v(.customBackground, d.customBackground); menuWallpaper = v(.menuWallpaper, d.menuWallpaper)
-    }
 
     static func load() -> GameSettings {
-        guard let d = UserDefaults.standard.data(forKey: key), let s = try? JSONDecoder().decode(GameSettings.self, from: d) else { return GameSettings() }
+        // Older saves: missing keys keep their defaults and a key that no
+        // longer decodes resets alone (see SavedState).
+        guard let d = UserDefaults.standard.data(forKey: key), let s = SavedState.decode(d, over: GameSettings()) else { return GameSettings() }
         return s
     }
     func save() {
