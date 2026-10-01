@@ -1,0 +1,6 @@
+.build/
+xtool/
+*.ipa
+Vendor-src/
+Tools/check/.build/
+.bsp/
