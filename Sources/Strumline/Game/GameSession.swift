@@ -144,6 +144,17 @@ final class GameSession: ObservableObject {
     var onFinish: (([GameResult]) -> Void)?
     var onQuit: (() -> Void)?
 
+    // Online play
+    /// Player 1's live score, a few times a second (online sessions).
+    var onProgress: ((NetScore) -> Void)?
+    private var lastProgress = -Double.infinity
+    /// Everyone's live scores and names, for the in-game scoreboard.
+    @Published var remoteScores: [NetScore] = []
+    var remoteNames: [String: String] = [:]
+    var localPlayerID = ""
+    /// The song is loaded but waiting for its scheduled start (online).
+    private(set) var started = false
+
     // Render-facing state (read every frame; not @Published).
     private(set) var now: Double = 0
     private(set) var currentSection = -1
@@ -195,6 +206,7 @@ final class GameSession: ObservableObject {
             endTime = last + 2.5
         }
         beatLines = chart.tempo.beatLines(until: endTime + 5)
+        now = startTime  // shown while waiting for a scheduled (online) start
 
         // Audio
         let stems = SongLoader.stems(in: pkg)
@@ -244,7 +256,19 @@ final class GameSession: ObservableObject {
 
     // MARK: Lifecycle
 
+    /// Starts at local host time `at` (online: everyone starts together);
+    /// the song is loaded now so the start itself is instant.
+    func start(at: Double) {
+        let delay = at - CACurrentMediaTime()
+        guard delay > 0.005 else { start(); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.finished else { return }
+            self.start()
+        }
+    }
+
     func start() {
+        started = true
         InputManager.shared.gameplayActive = true
         InputManager.shared.clearQueue()
         InputManager.shared.startTilt(settings.tiltStarPower && runs.count == 1)
@@ -369,6 +393,8 @@ final class GameSession: ObservableObject {
         if host == lastFrameHost { return now + settings.videoOffsetMs / 1000 }
         lastFrameHost = host
         guard !finished else { return now }
+        // Waiting for an online start: show the highway, ignore input.
+        guard started else { _ = InputManager.shared.drain(); return now + settings.videoOffsetMs / 1000 }
 
         let events = InputManager.shared.drain()
         if paused {
@@ -383,6 +409,11 @@ final class GameSession: ObservableObject {
             handleEngineEvents(r)
         }
         updateSection()
+        if let report = onProgress, host - lastProgress >= 0.25 {
+            lastProgress = host
+            let e = runs[0].engine
+            report(NetScore(playerID: localPlayerID, score: e.score, combo: e.combo, notesHit: e.notesHit, notesTotal: e.notesTotal, spActive: e.spActive))
+        }
         if videoWaiting && now + videoStart >= 0 { syncVideo(playing: true) }
 
         if practice != nil {

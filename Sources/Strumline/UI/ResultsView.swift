@@ -61,7 +61,7 @@ struct ResultsView: View {
             case .right, .down: choice = (choice + 1) % choiceCount
             case .left, .up: choice = (choice + choiceCount - 1) % choiceCount
             case .confirm: choose(choice)
-            case .back: app.screen = .songs(practice: false)
+            case .back: app.continueFromResults()
             case .pageDown: turnPage(1)
             case .pageUp: turnPage(-1)
             }
@@ -170,7 +170,7 @@ struct ResultsView: View {
     /// Practice target offered after a single-player run (a real chart
     /// section the player missed notes in).
     private var practiceTarget: SectionStat? {
-        guard app.lastResults.count <= 1, let r = app.lastResult, let w = weakest(r), w.index >= 0 else { return nil }
+        guard !app.lastPlayWasOnline, app.lastResults.count <= 1, let r = app.lastResult, let w = weakest(r), w.index >= 0 else { return nil }
         return w
     }
 
@@ -181,7 +181,7 @@ struct ResultsView: View {
         switch i {
         case 0: app.restartCurrent()
         case 2: practiceWeakest()
-        default: app.screen = .songs(practice: false)
+        default: app.continueFromResults()
         }
     }
 

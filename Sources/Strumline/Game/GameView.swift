@@ -66,6 +66,14 @@ struct GameView: View {
                 Spacer()
             }
 
+            // Online: everyone's live score.
+            if !session.remoteScores.isEmpty {
+                OnlineScoreboard(scores: session.remoteScores, names: session.remoteNames, me: session.localPlayerID)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .padding(.leading, 10)
+                    .allowsHitTesting(false)
+            }
+
             if session.paused {
                 if let c = session.resumeCountdown {
                     Text(c > 0 ? "\(c)" : "Go!")
@@ -222,5 +230,30 @@ struct VideoLayer: UIViewRepresentable {
     final class PlayerView: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
+}
+
+/// Live scores in an online song, highest first.
+struct OnlineScoreboard: View {
+    var scores: [NetScore]
+    var names: [String: String]
+    var me: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(scores.sorted { $0.score > $1.score }.enumerated()), id: \.element.playerID) { rank, s in
+                HStack(spacing: 6) {
+                    Text("\(rank + 1)").font(.caption2.bold()).foregroundStyle(.secondary).frame(width: 12)
+                    Text(names[s.playerID] ?? "Player").font(.caption.bold()).lineLimit(1)
+                        .foregroundStyle(s.playerID == me ? Theme.accent : .white)
+                    Spacer(minLength: 6)
+                    if s.spActive { Image(systemName: "bolt.fill").font(.system(size: 9)).foregroundStyle(Palette.sp) }
+                    Text("\(s.score)").font(.caption.monospacedDigit())
+                }
+            }
+        }
+        .frame(width: 150)
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(.ultraThinMaterial))
     }
 }

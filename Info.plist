@@ -93,5 +93,12 @@
     <string>Dark</string>
     <key>UIBackgroundModes</key>
     <array/>
+    <!-- Online play: find and join other phones on the same network. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Strumline finds and connects to other players on your network for online play.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_strumline._tcp</string>
+    </array>
 </dict>
 </plist>

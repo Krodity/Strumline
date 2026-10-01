@@ -33,6 +33,7 @@ enum Screen: Equatable {
     case songs(practice: Bool)
     case play
     case results
+    case online
     case settings
     case library
 }
@@ -72,6 +73,11 @@ final class AppModel: ObservableObject {
     }
     @Published private(set) var scores: [String: ScoreRecord] = [:]
     @Published var session: GameSession?
+    /// Online play (host or guest), nil when playing on your own.
+    @Published var online: OnlineSession?
+    /// This device's result in the current online song (remote ones are merged in).
+    var onlineLocalResult: GameResult?
+    var lastPlayWasOnline = false
     @Published var lastResult: GameResult?
     @Published var selectedSong: SongEntry?
     @Published var playError: String?
@@ -425,23 +431,53 @@ final class AppModel: ObservableObject {
 
     /// Rebuilds the session so changed settings take effect.
     func restartCurrent() {
+        // Online songs are started by the host, for everyone: "restart"
+        // leaves this one and goes back to the lobby.
+        if let o = online, lastPlayWasOnline {
+            if let s = session {
+                s.quitSilently()
+                session = nil
+                if o.isHost { o.endSong(abort: true) }
+            }
+            continueFromResults()
+            return
+        }
         guard let (s, i, d, p) = lastPlay else { return }
         session?.quitSilently()
         play(song: s, instrument: i, difficulty: d, practice: p)
     }
 
-    func play(song: SongEntry, instrument: Instrument, difficulty: Difficulty, practice: PracticeRange?) {
+    func play(song: SongEntry, instrument: Instrument, difficulty: Difficulty, practice: PracticeRange?,
+              onlineStart: (at: Double, speed: Double)? = nil) {
+        // Online: the host's Play picks the song for the lobby (it starts from
+        // there, for everyone); guests don't pick.
+        if let o = online, o.ended == nil, practice == nil, onlineStart == nil {
+            if o.isHost {
+                settings.lastInstrument = instrument
+                settings.lastDifficulty = difficulty
+                o.pick(song)
+                o.setPart(instrument, difficulty)
+                preview.stop()
+                screen = .online
+            } else {
+                playError = "You're in an online session: the host picks the songs. Leave it (Online › Leave) to play on your own."
+            }
+            return
+        }
         lastPlay = (song, instrument, difficulty, practice)
+        lastPlayWasOnline = onlineStart != nil
         log.info("play \(song.name, privacy: .public) \(instrument.rawValue, privacy: .public)/\(difficulty.displayName, privacy: .public) practice=\(practice != nil)")
         preview.stop()
         settings.lastInstrument = instrument
         settings.lastDifficulty = difficulty
         // Practice plays at its own speed (see GameSettings.practiceSpeed).
-        let speed = practice != nil ? settings.practiceSpeed : settings.modifiers.songSpeed
+        let speed = onlineStart?.speed ?? (practice != nil ? settings.practiceSpeed : settings.modifiers.songSpeed)
         var sessionSettings = settings
         sessionSettings.modifiers.songSpeed = speed
         do {
-            let setups = players.indices.map { i in
+            // Online sessions are one player per device.
+            let local = onlineStart != nil ? Array(players.indices.prefix(1)) : Array(players.indices)
+            let setups = local.map { i in
                 var ps = settings(forPlayer: i)
                 ps.modifiers.songSpeed = speed
                 return PlayerSetup(name: players[i].name,
@@ -459,16 +495,35 @@ final class AppModel: ObservableObject {
                 }
                 lastResults = out
                 lastResult = out.first
+                if let o = online, onlineStart != nil, let mine = out.first {
+                    onlineLocalResult = mine
+                    o.finishLocal(mine.stats)
+                    lastResults = mergedOnlineResults()
+                }
                 session = nil
                 screen = .results
             }
             s.onQuit = { [weak self] in
-                self?.session = nil
-                self?.screen = .songs(practice: practice != nil)
+                guard let self else { return }
+                session = nil
+                if let o = online, onlineStart != nil {
+                    if o.isHost { o.endSong(abort: true) }
+                    screen = .online
+                } else {
+                    screen = .songs(practice: practice != nil)
+                }
             }
             session = s
             screen = .play
-            s.start()
+            if let start = onlineStart, let o = online {
+                s.localPlayerID = o.myID
+                s.onProgress = { [weak o] score in o?.report(score) }
+                o.onScores = { [weak s] scores in s?.remoteScores = scores }
+                s.remoteNames = Dictionary(o.players.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+                s.start(at: start.at)
+            } else {
+                s.start()
+            }
         } catch {
             log.error("play failed for \(song.name, privacy: .public): \(String(describing: error), privacy: .public)")
             playError = "\(song.name): \(error)"

@@ -15,5 +15,7 @@ let package = Package(
         .target(name: "CAtomics"),
         .target(name: "StrumCore", dependencies: ["CStbVorbis", "COpus", "CAtomics"]),
         .executableTarget(name: "corecheck", dependencies: ["StrumCore"]),
+        // Stand-in online player for testing online play with one phone.
+        .executableTarget(name: "strumnet", dependencies: ["StrumCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )

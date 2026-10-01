@@ -37,6 +37,8 @@ struct RootView: View {
                 NavigationStack { SettingsView() }
             case .library:
                 NavigationStack { LibraryView() }
+            case .online:
+                NavigationStack { OnlineView() }
             }
         }
         .background(KeyCatcher().frame(width: 0, height: 0))
@@ -50,6 +52,7 @@ struct MainMenuView: View {
     private let items: [(String, String, Screen)] = [
         ("Quickplay", "play.fill", .songs(practice: false)),
         ("Practice", "metronome.fill", .songs(practice: true)),
+        ("Online", "person.2.wave.2.fill", .online),
         ("Library", "folder.fill", .library),
         ("Settings", "gearshape.fill", .settings),
     ]

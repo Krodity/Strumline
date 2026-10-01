@@ -22,6 +22,7 @@ Touch (tap lanes, or frets + strum bar; flick phone for star power), hardware ke
 - `Sources/StrumCore` — platform-independent: `.chart`/`.mid`/`.sng`/`song.ini` parsing, tempo map, engine, modifiers, Ogg Vorbis (stb_vorbis) + Ogg Opus (libopus 1.5.2) + WAV decoders, lock-free stem mixer.
 - `Sources/Strumline` — iOS app.
 - `Tools/check` — Linux harness: `swift build --build-system native -c release && .build/release/corecheck <songs…>` parses, bot-plays every part (expects full combos), decodes every stem with a seek check, diffs `.chart` vs `.mid`.
+- `Tools/check` also builds `strumnet`, a stand-in online player for testing online play with one phone: `.build/release/strumnet join <phone-ip>` joins the phone's session, `.build/release/strumnet host` hosts one for the phone to join (port 47821, plays along with a simulated score).
 - `Tools/demo/make_demo.py` — generates the bundled original demo song (`uv run --with numpy python make_demo.py OUT`), plus `.mid` and `.sng` fixtures.
 
 ## Build / install

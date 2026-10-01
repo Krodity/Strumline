@@ -1,0 +1,333 @@
+import Foundation
+import Network
+import QuartzCore
+import StrumCore
+
+/// The phone's side of online play: moves bytes for `NetHost` / `NetGuest`
+/// (StrumCore) over Network.framework and publishes their state for the UI.
+/// Everything runs on the main queue.
+@MainActor
+final class OnlineSession: ObservableObject {
+    enum Role { case host, guest }
+    let role: Role
+    var isHost: Bool { role == .host }
+
+    @Published private(set) var players: [NetPlayer] = []
+    @Published private(set) var song: NetSong?
+    @Published private(set) var scores: [NetScore] = []
+    @Published private(set) var finals: [String: PlayStats] = [:]
+    @Published private(set) var myID = ""
+    @Published private(set) var hostName = ""
+    /// Connecting / connected / problems, for the lobby.
+    @Published var status = ""
+    /// Set when the session is over (refused, host left, connection lost).
+    @Published private(set) var ended: String?
+    @Published private(set) var playing = false
+
+    // App hooks
+    /// Start `chartHash` at local host time `at`, song speed `speed`.
+    var onStart: (_ chartHash: String, _ at: Double, _ speed: Double) -> Void = { _, _, _ in }
+    var hasSong: (String) -> Bool = { _ in false }
+    /// The host stopped the song for everyone.
+    var onAbort: () -> Void = {}
+    /// Live scores or results changed while a song is on.
+    var onScores: ([NetScore]) -> Void = { _ in }
+    var onFinals: () -> Void = {}
+
+    private var host: NetHost?
+    private var guest: NetGuest?
+    private var listener: NWListener?
+    private var connections: [Int: NWConnection] = [:]
+    private var framers: [Int: NetFramer] = [:]
+    private var nextConnection = 1
+    private var guestConnection: NWConnection?
+    private var guestFramer = NetFramer()
+    private var timer: Timer?
+
+    private static var now: Double { CACurrentMediaTime() }
+
+    // MARK: Host
+
+    init(hosting me: NetPlayer) {
+        role = .host
+        let h = NetHost(host: me)
+        host = h
+        myID = h.hostID
+        hostName = me.name
+        h.send = { [weak self] c, m in self?.send(m, to: c) }
+        h.onChange = { [weak self] in self?.pullFromHost() }
+        pullFromHost()
+        do {
+            let l = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: Net.port)!)
+            l.service = NWListener.Service(name: me.name, type: Net.serviceType)
+            l.newConnectionHandler = { [weak self] c in MainActor.assumeIsolated { self?.accept(c) } }
+            l.stateUpdateHandler = { [weak self] st in
+                MainActor.assumeIsolated {
+                    switch st {
+                    case .ready: self?.status = "Waiting for players to join"
+                    case .failed(let e): self?.finish("Couldn't host: \(e.localizedDescription)")
+                    default: break
+                    }
+                }
+            }
+            listener = l
+            l.start(queue: .main)
+        } catch {
+            ended = "Couldn't host: \(error.localizedDescription)"
+        }
+        startTimer()
+    }
+
+    private func accept(_ c: NWConnection) {
+        let id = nextConnection
+        nextConnection += 1
+        connections[id] = c
+        framers[id] = NetFramer()
+        c.stateUpdateHandler = { [weak self] st in
+            MainActor.assumeIsolated {
+                switch st {
+                case .failed, .cancelled: self?.dropConnection(id)
+                default: break
+                }
+            }
+        }
+        c.start(queue: .main)
+        receive(on: c) { [weak self] data in
+            guard let self else { return false }
+            do {
+                for m in try self.framers[id, default: NetFramer()].append(data) { self.host?.receive(m, from: id, now: Self.now) }
+                return true
+            } catch {
+                return false  // junk: drop them
+            }
+        } closed: { [weak self] in self?.dropConnection(id) }
+    }
+
+    private func dropConnection(_ id: Int) {
+        guard let c = connections.removeValue(forKey: id) else { return }
+        framers[id] = nil
+        c.cancel()
+        host?.disconnected(id)
+    }
+
+    private func send(_ m: NetMessage, to id: Int) {
+        connections[id]?.send(content: NetFramer.encode(m), completion: .idempotent)
+    }
+
+    private func pullFromHost() {
+        guard let h = host else { return }
+        players = h.players
+        song = h.song
+        playing = h.phase == .playing
+        let s = h.players.compactMap { h.scores[$0.id] }
+        if s != scores { scores = s; onScores(s) }
+        if h.finals != finals { finals = h.finals; onFinals() }
+        let joined = h.players.count - 1
+        if listener != nil && !playing { status = joined == 0 ? "Waiting for players to join" : "\(joined) joined" }
+    }
+
+    // MARK: Guest
+
+    init(joining endpoint: NWEndpoint, as me: NetPlayer) {
+        role = .guest
+        let g = NetGuest(me: me)
+        guest = g
+        g.send = { [weak self] m in self?.guestConnection?.send(content: NetFramer.encode(m), completion: .idempotent) }
+        g.onChange = { [weak self] in self?.pullFromGuest() }
+        g.hasSong = { [weak self] hash in self?.hasSong(hash) ?? false }
+        g.onStart = { [weak self] hash, at, speed in
+            self?.playing = true
+            self?.onStart(hash, at, speed)
+        }
+        g.onAbort = { [weak self] in
+            self?.playing = false
+            self?.onAbort()
+        }
+        g.onEnd = { [weak self] reason in self?.finish(reason) }
+        status = "Connecting…"
+        let c = NWConnection(to: endpoint, using: .tcp)
+        guestConnection = c
+        c.stateUpdateHandler = { [weak self] st in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                switch st {
+                case .ready:
+                    self.status = "Connected"
+                    self.guest?.connected(now: Self.now)
+                case .waiting(let e): self.status = "Waiting: \(e.localizedDescription)"
+                case .failed(let e): self.finish("Connection lost: \(e.localizedDescription)")
+                default: break
+                }
+            }
+        }
+        c.start(queue: .main)
+        receive(on: c) { [weak self] data in
+            guard let self else { return false }
+            do {
+                for m in try self.guestFramer.append(data) { self.guest?.receive(m, now: Self.now) }
+                return true
+            } catch { return false }
+        } closed: { [weak self] in self?.finish("Connection closed") }
+        startTimer()
+    }
+
+    /// "100.64.1.2" or "host.local" (port optional: "host:47821").
+    static func endpoint(for address: String) -> NWEndpoint? {
+        let a = address.trimmingCharacters(in: .whitespaces)
+        guard !a.isEmpty else { return nil }
+        var hostPart = a, port = Net.port
+        if let colon = a.lastIndex(of: ":"), a.filter({ $0 == ":" }).count == 1, let p = UInt16(a[a.index(after: colon)...]) {
+            hostPart = String(a[..<colon]); port = p
+        }
+        return .hostPort(host: NWEndpoint.Host(hostPart), port: NWEndpoint.Port(rawValue: port)!)
+    }
+
+    private func pullFromGuest() {
+        guard let g = guest else { return }
+        players = g.players
+        song = g.song
+        myID = g.myID ?? ""
+        hostName = g.hostName
+        if g.scores != scores { scores = g.scores; onScores(g.scores) }
+        if g.finals != finals { finals = g.finals; onFinals() }
+        if let s = g.song, !playing { status = hasSong(s.chartHash) ? "Ready" : "You don't have \(s.name)" }
+    }
+
+    // MARK: Shared
+
+    private func receive(on c: NWConnection, data handle: @escaping (Data) -> Bool, closed: @escaping () -> Void) {
+        c.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, complete, error in
+            MainActor.assumeIsolated {
+                guard self != nil else { return }
+                if let data, !data.isEmpty, !handle(data) { closed(); return }
+                if complete || error != nil { closed(); return }
+                self?.receive(on: c, data: handle, closed: closed)
+            }
+        }
+    }
+
+    private func startTimer() {
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.host?.tick(now: Self.now)
+                self?.guest?.tick(now: Self.now)
+            }
+        }
+    }
+
+    private func finish(_ reason: String) {
+        guard ended == nil else { return }
+        ended = reason
+        status = reason
+        playing = false
+        teardown()
+    }
+
+    private func teardown() {
+        timer?.invalidate()
+        timer = nil
+        listener?.cancel()
+        listener = nil
+        for c in connections.values { c.cancel() }
+        connections = [:]
+        guestConnection?.cancel()
+        guestConnection = nil
+    }
+
+    // MARK: Actions
+
+    var clockReady: Bool { guest?.clock.isReady ?? true }
+
+    func pick(_ s: SongEntry) {
+        host?.pick(NetSong(chartHash: s.chartHash, name: s.name, artist: s.artist, lengthMs: s.lengthMs))
+    }
+
+    func setPart(_ inst: Instrument, _ diff: Difficulty) {
+        if let h = host { h.setHostPart(inst, diff) } else { guest?.setPart(inst, diff) }
+    }
+
+    /// Host: start the picked song for everyone in 4 s.
+    func startSong(speed: Double) {
+        guard let h = host, let s = h.song else { return }
+        let at = Self.now + 4
+        h.start(at: at, speed: speed)
+        playing = true
+        onStart(s.chartHash, at, speed)
+    }
+
+    func report(_ s: NetScore) {
+        if let h = host { h.reportLocal(s) } else { guest?.report(s) }
+    }
+
+    func finishLocal(_ stats: PlayStats) {
+        if let h = host { h.finishLocal(stats) } else { guest?.finish(stats) }
+    }
+
+    /// Host, after results (or quitting): back to the lobby.
+    func endSong(abort: Bool) {
+        playing = false
+        host?.endSong(abort: abort)
+    }
+
+    func leave() {
+        host?.close()
+        guest?.leave()
+        // Let the goodbye go out before closing.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.teardown() }
+        ended = "Left"
+    }
+
+    func name(of id: String) -> String { players.first { $0.id == id }?.name ?? "Player" }
+}
+
+/// Finds hosts on the local network (Bonjour).
+@MainActor
+final class OnlineBrowser: ObservableObject {
+    struct Found: Identifiable, Hashable {
+        var id: String { name }
+        var name: String
+        var endpoint: NWEndpoint
+    }
+    @Published private(set) var found: [Found] = []
+    private var browser: NWBrowser?
+
+    func start() {
+        guard browser == nil else { return }
+        let b = NWBrowser(for: .bonjour(type: Net.serviceType, domain: nil), using: .tcp)
+        b.browseResultsChangedHandler = { [weak self] results, _ in
+            MainActor.assumeIsolated {
+                self?.found = results.compactMap { r in
+                    if case .service(let name, _, _, _) = r.endpoint { return Found(name: name, endpoint: r.endpoint) }
+                    return nil
+                }.sorted { $0.name < $1.name }
+            }
+        }
+        browser = b
+        b.start(queue: .main)
+    }
+
+    func stop() {
+        browser?.cancel()
+        browser = nil
+        found = []
+    }
+}
+
+/// This phone's IPv4 addresses (Wi-Fi, Tailscale…) so others can join by address.
+func localIPv4Addresses() -> [(name: String, address: String)] {
+    var out: [(String, String)] = []
+    var ifaddr: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return [] }
+    defer { freeifaddrs(ifaddr) }
+    for p in sequence(first: first, next: { $0.pointee.ifa_next }) {
+        let i = p.pointee
+        guard let sa = i.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET), (i.ifa_flags & UInt32(IFF_LOOPBACK)) == 0, (i.ifa_flags & UInt32(IFF_UP)) != 0 else { continue }
+        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        guard getnameinfo(sa, socklen_t(sa.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
+        let name = String(cString: i.ifa_name)
+        let addr = String(cString: host)
+        let label = name.hasPrefix("en") ? "Wi-Fi" : name.hasPrefix("utun") && addr.hasPrefix("100.") ? "Tailscale" : name
+        out.append((label, addr))
+    }
+    return out
+}
