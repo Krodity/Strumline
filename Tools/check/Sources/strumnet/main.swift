@@ -11,6 +11,8 @@ import Glibc
 //       Joins the phone's session. Claims to have every song; with
 //       --no-song it says it doesn't, so the host sends it (checked and
 //       kept in a temp folder). Plays along with a simulated score.
+//       --drop-after N cuts the connection N s into a song, then it
+//       reconnects (the host should give the same slot and score back).
 //   strumnet host [--name PC] [--songs <folder>] [--wait 20]
 //       Hosts a session. Picks the first song in --songs (default: the
 //       bundled demo), sends it to guests who don't have it, and starts it
@@ -32,8 +34,10 @@ let songsDir = option("--songs") ?? URL(fileURLWithPath: #filePath).deletingLast
     .appendingPathComponent("../../../../Sources/Strumline/Resources/Songs").standardizedFileURL.path
 let waitSeconds = Double(option("--wait") ?? "20") ?? 20
 let noSong = flag("--no-song")
+/// Testing reconnects: drop our own connection this many seconds into a song.
+let dropAfter = option("--drop-after").flatMap(Double.init)
 guard let mode = args.first, mode == "join" || mode == "host" else {
-    say("usage: strumnet join <address[:port]> [--name PC] [--no-song]\n       strumnet host [--name PC] [--songs <folder>] [--wait 20]")
+    say("usage: strumnet join <address[:port]> [--name PC] [--no-song] [--drop-after N]\n       strumnet host [--name PC] [--songs <folder>] [--wait 20]")
     exit(2)
 }
 func now() -> Double { ProcessInfo.processInfo.systemUptime }
@@ -100,15 +104,34 @@ if mode == "join" {
     var hostPart = args[1], port = Net.port
     if let c = hostPart.lastIndex(of: ":"), let p = UInt16(hostPart[hostPart.index(after: c)...]) { port = p; hostPart = String(hostPart[..<c]) }
     guard var addr = resolve(hostPart, port) else { say("can't resolve \(hostPart)"); exit(1) }
-    let fd = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
-    let ok = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-    guard ok == 0 else { say("can't connect to \(hostPart):\(port): \(String(cString: strerror(errno)))"); exit(1) }
-    nonBlocking(fd)
-    let c = Conn(fd: fd)
+    func open() -> Conn? {
+        let fd = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
+        let ok = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        guard ok == 0 else { close(fd); return nil }
+        nonBlocking(fd)
+        return Conn(fd: fd)
+    }
+    guard var c = open() else { say("can't connect to \(hostPart):\(port): \(String(cString: strerror(errno)))"); exit(1) }
     let g = NetGuest(me: me)
+    var dropped = false
+    /// Lost the host: reconnect (every 2 s, ~30 s) and say hello again.
+    func reconnect(_ why: String) {
+        close(c.fd)
+        say("\(stamp()) \(why) — reconnecting")
+        for attempt in 1...15 {
+            sleep(2)
+            if let n = open() {
+                c = n
+                g.connected(now: now())
+                say("\(stamp()) reconnected (attempt \(attempt)) as \(g.myID ?? "?")")
+                return
+            }
+        }
+        say("\(stamp()) gave up reconnecting"); exit(1)
+    }
     var play: FakePlay?
     var lastReport = 0.0, lastBoard = "", lastBoardAt = 0.0
-    g.send = { c.send($0) }
+    g.send = { c.send($0) }  // `c` is replaced on reconnect
     g.hasSong = { hash in say("\(stamp()) host picked \(g.song?.name ?? hash) — \(noSong ? "don't have it, asking for it" : "have it")"); return !noSong }
     let cache = FileManager.default.temporaryDirectory.appendingPathComponent("strumnet-songs", isDirectory: true)
     g.songCache = cache
@@ -135,10 +158,10 @@ if mode == "join" {
     g.connected(now: now())
     say("\(stamp()) connected to \(hostPart):\(port) as \(name)")
     while true {
-        var p = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        var p = pollfd(fd: c.fd, events: Int16(POLLIN), revents: 0)
         _ = poll(&p, 1, 50)
         if p.revents & Int16(POLLIN) != 0 {
-            guard let d = c.read() else { say("\(stamp()) connection closed"); exit(0) }
+            guard let d = c.read() else { reconnect("connection closed"); continue }
             do { for m in try c.framer.append(d) { g.receive(m, now: now()) } } catch { say("bad data from host"); exit(1) }
         }
         let t = now()
@@ -153,7 +176,12 @@ if mode == "join" {
             if t - lastReport >= 0.25 { lastReport = t; g.report(pl.score(at: t)) }
             if pl.done(at: t) { g.finish(pl.stats()); say("\(stamp()) finished, sent results (\(pl.stats().score))"); play = nil }
         }
-        if !c.flush() { say("\(stamp()) connection lost"); exit(0) }
+        if !c.flush() { reconnect("connection lost"); continue }
+        if g.myID != nil, g.isStale(now: t) { reconnect("no reply from the host"); continue }
+        if let d = dropAfter, !dropped, let pl = play, t >= pl.start + d {
+            dropped = true
+            reconnect("dropping the connection on purpose (--drop-after \(Int(d)))")
+        }
     }
 }
 
@@ -174,6 +202,7 @@ say("\(stamp()) song: \(song.name) — \(song.artist) [\(song.chartHash)]")
 let h = NetHost(host: me)
 var conns: [Int32: Conn] = [:]
 h.send = { fd, m in conns[Int32(fd)]?.send(m) }
+h.closeConnection = { fd in if conns.removeValue(forKey: Int32(fd)) != nil { close(Int32(fd)); say("\(stamp()) \(fd) went silent: dropped") } }
 h.sendChunk = { fd, c in conns[Int32(fd)]?.out.append(NetFramer.encode(c)) }
 // Flow control: keep at most ~512 KB queued per guest.
 h.canSend = { fd in (conns[Int32(fd)]?.out.count ?? Int.max) < 512 * 1024 }

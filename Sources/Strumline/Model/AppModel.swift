@@ -524,6 +524,11 @@ final class AppModel: ObservableObject {
                 s.onProgress = { [weak o] score in o?.report(score) }
                 o.onScores = { [weak s] scores in s?.remoteScores = scores }
                 s.remoteNames = Dictionary(o.players.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+                s.remoteOffline = Set(o.players.filter { !$0.connected }.map(\.id))
+                o.onPlayers = { [weak s] players in
+                    s?.remoteNames = Dictionary(players.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+                    s?.remoteOffline = Set(players.filter { !$0.connected }.map(\.id))
+                }
                 s.start(at: start.at)
             } else {
                 s.start()

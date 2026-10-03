@@ -11,7 +11,10 @@ public enum Net {
     /// Bonjour service type.
     public static let serviceType = "_strumline._tcp"
     /// Bumped on incompatible protocol changes; mismatches are refused.
-    public static let protocolVersion = 2
+    public static let protocolVersion = 3
+    /// A connection that's been silent this long is treated as gone (guests
+    /// ping every 2 s, the host answers each one).
+    public static let timeout: Double = 10
     /// Bytes per song-transfer chunk.
     public static let chunkSize = 64 * 1024
     /// A guest won't accept a song bigger than this.

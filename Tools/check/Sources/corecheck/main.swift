@@ -590,7 +590,7 @@ do {
         var rounds = 0
         repeat {
             while !inFlight.isEmpty { guest.receive(inFlight.removeFirst(), now: 0) }
-            host.tick(now: Double(rounds))
+            host.tick(now: 0)  // one instant: this test is about bytes, not timeouts
             rounds += 1
         } while (!inFlight.isEmpty || host.sending) && rounds < 100_000
         return (host, guest, received, cache)
@@ -607,12 +607,71 @@ do {
     check(same && entry?.chartHash == demo.chartHash && host.players.last?.hasSong == true && entry?.url.path.hasPrefix(cache.path) == true,
           "F1 transfer: \(source.offer.files.count) files (\(mb) MB) arrive byte-identical, load as the same song (hash \(entry?.chartHash ?? "–")), guest marked as having it")
 
+    // Rejoining re-sends the pick: a song already received must survive it
+    // (it may be playing) and not be asked for again.
+    do {
+        let (h3, g3, e3, _) = try transfer(corruptAt: 999)
+        var asked = false
+        h3.send = { _, m in if case .songAccept = m { asked = true } }
+        g3.send = { m in if case .songAccept = m { asked = true }; h3.receive(m, from: 1, now: 0) }
+        g3.receive(.pick(source.offer.song), now: 0)
+        let still = e3.map { FileManager.default.fileExists(atPath: $0.url.appendingPathComponent(demo.chartFile).path) } ?? false
+        check(still && !asked && h3.players.last?.hasSong == true, "F1 transfer: a repeated pick (rejoin) keeps the received song and doesn't re-download")
+    }
+
     // A corrupted byte in the chart is caught; nothing is kept.
     let (host2, _, entry2, cache2) = try transfer(corruptAt: 0)
     let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: cache2.path))?.count ?? 0
     check(entry2 == nil && host2.players.last?.hasSong == false && leftovers == 0,
           "F1 transfer: a corrupted chart is rejected and deleted (guest marked as not having it)")
 } catch { fail("F1 transfer: \(error)") }
+
+// F1 phase 3: silent connections time out; a guest that drops mid-song
+// rejoins its own slot and keeps its score.
+do {
+    let host = NetHost(host: NetPlayer(id: "", name: "Ant", instrument: .guitar, difficulty: .expert))
+    let guest = NetGuest(me: NetPlayer(id: "", name: "PC", instrument: .drums, difficulty: .hard))
+    var conn = 1, closed: [Int] = []
+    var t = 0.0
+    host.send = { c, m in if c == conn { guest.receive(m, now: t) } }
+    host.closeConnection = { closed.append($0) }
+    guest.send = { m in host.receive(m, from: conn, now: t) }
+    guest.hasSong = { _ in true }
+    guest.connected(now: t)
+    let firstID = guest.myID
+    host.pick(NetSong(chartHash: "abc", name: "Demo", artist: "S", lengthMs: 60000))
+    host.start(at: t + 4, speed: 1)
+    guest.report(NetScore(playerID: "", score: 777, combo: 5, notesHit: 5, notesTotal: 6, spActive: false))
+    for _ in 0..<20 { t += 0.5; host.tick(now: t); guest.tick(now: t) }
+    check(closed.isEmpty && !guest.isStale(now: t), "F1 phase 3: a pinging guest stays connected (no timeout)")
+
+    // The network dies silently: nothing more arrives either way.
+    host.send = { _, _ in }; guest.send = { _ in }
+    for _ in 0..<25 { t += 0.5; host.tick(now: t); guest.tick(now: t) }
+    let dropped = host.players.first { $0.name == "PC" }?.connected == false
+    check(closed == [1] && dropped && guest.isStale(now: t), "F1 phase 3: silent for >10 s → host drops the guest (\(closed)), guest sees the host as stale")
+
+    // The guest reconnects on a new connection, mid-song.
+    conn = 2
+    host.send = { c, m in if c == conn { guest.receive(m, now: t) } }
+    guest.send = { m in host.receive(m, from: conn, now: t) }
+    guest.connected(now: t)
+    let pc = host.players.filter { $0.name == "PC" }
+    check(guest.myID == firstID && pc.count == 1 && pc[0].connected && host.scores[firstID ?? ""]?.score == 777 && host.phase == .playing,
+          "F1 phase 3: rejoin mid-song restores the same slot (\(firstID ?? "–")) and score")
+
+    // A stranger can't take over someone's slot while they're still connected.
+    let other = NetGuest(me: NetPlayer(id: "", name: "Imposter", instrument: .guitar, difficulty: .easy))
+    var refused = ""
+    other.onEnd = { refused = $0 }
+    other.send = { m in host.receive(m, from: 3, now: t) }
+    host.send = { c, m in if c == 3 { other.receive(m, now: t) } else if c == conn { guest.receive(m, now: t) } }
+    var hello = NetPlayer(id: firstID ?? "", name: "Imposter", instrument: .guitar, difficulty: .easy)
+    hello.id = firstID ?? ""
+    host.receive(.hello(version: Net.protocolVersion, player: hello), from: 3, now: t)
+    check(!refused.isEmpty && host.players.filter { $0.name == "PC" }.count == 1 && host.players.allSatisfy { $0.name != "Imposter" },
+          "F1 phase 3: a connected player's slot can't be taken (\(refused))")
+}
 
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) FAILURE(S)")
 exit(failures == 0 ? 0 : 1)

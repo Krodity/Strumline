@@ -35,11 +35,15 @@ private struct OnlineStartView: View {
             r.append(NavRow(id: "found-\(f.name)", section: "Join nearby", title: f.name, symbol: "person.2.fill",
                             kind: .button(destructive: false) { app.joinOnline(f.endpoint) }))
         }
+        for recent in app.recentOnlineAddresses {
+            r.append(NavRow(id: "recent-\(recent)", section: "Recent", title: recent, symbol: "clock.arrow.circlepath",
+                            kind: .button(destructive: false) { app.joinOnline(address: recent) }))
+        }
         r.append(NavRow(id: "addr", section: "Join by address", title: "Address (e.g. 100.64.1.2)", kind: .text($address)))
         let a = address.trimmingCharacters(in: .whitespaces)
-        if let ep = OnlineSession.endpoint(for: a) {
+        if OnlineSession.endpoint(for: a) != nil {
             r.append(NavRow(id: "joinaddr", section: "Join by address", title: "Join \(a)", symbol: "arrow.right.circle.fill",
-                            kind: .button(destructive: false) { app.joinOnline(ep) }))
+                            kind: .button(destructive: false) { app.joinOnline(address: a) }))
         }
         r.append(NavRow(id: "you", section: "You", title: "You play as \(app.players.first?.name ?? "Player") on \(app.settings.lastInstrument.displayName) \(app.settings.lastDifficulty.displayName)",
                         detail: "Rename yourself in the player bar; change your part in the lobby.", kind: .info))

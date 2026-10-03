@@ -34,6 +34,9 @@ public final class NetHost {
     public let hostID = "host"
 
     private var playerOf: [Int: String] = [:]  // connection → player id
+    private var lastHeard: [Int: Double] = [:]
+    /// Closes a connection the host gave up on (silent too long).
+    public var closeConnection: (_ connection: Int) -> Void = { _ in }
     private var nextID = 1
     private var scoresDirty = false
     private var lastScoreboard = -Double.infinity
@@ -55,8 +58,20 @@ public final class NetHost {
     private func broadcastLobby() { broadcast(.lobby(players)); onChange() }
 
     public func receive(_ m: NetMessage, from c: Int, now: Double) {
+        lastHeard[c] = now
         if case .hello(let version, var p) = m {
             guard version == Net.protocolVersion else { send(c, .refused(reason: "Different Strumline version")); return }
+            // A player coming back after a dropped connection gets their own
+            // slot (and score) back, even mid-song.
+            if !p.id.isEmpty, let i = players.firstIndex(where: { $0.id == p.id && !$0.connected && $0.id != hostID }) {
+                playerOf[c] = p.id
+                players[i].connected = true
+                send(c, .welcome(playerID: p.id, hostName: players[0].name))
+                if let s = song { send(c, .pick(s)) }
+                if phase == .playing { send(c, .scoreboard(players.compactMap { scores[$0.id] })) }
+                broadcastLobby()
+                return
+            }
             guard phase == .lobby else { send(c, .refused(reason: "A song is in progress")); return }
             guard players.filter(\.connected).count < maxPlayers else { send(c, .refused(reason: "Session is full")); return }
             p.id = "p\(nextID)"; nextID += 1
@@ -121,6 +136,7 @@ public final class NetHost {
     /// The connection closed (or sent `leave`).
     public func disconnected(_ c: Int) {
         transfers[c] = nil
+        lastHeard[c] = nil
         guard let id = playerOf.removeValue(forKey: c) else { return }
         if phase == .lobby {
             players.removeAll { $0.id == id }
@@ -216,6 +232,12 @@ public final class NetHost {
 
     /// Call ~10×/s: sends song chunks and the scoreboard (at most 4×/s, only on change).
     public func tick(now: Double) {
+        // Drop guests that went silent (their pings stopped): the socket
+        // may never report the loss itself.
+        for c in Array(playerOf.keys) where now - (lastHeard[c] ?? now) > Net.timeout {
+            closeConnection(c)
+            disconnected(c)
+        }
         pump()
         guard scoresDirty, now - lastScoreboard >= 0.25 else { return }
         scoresDirty = false
@@ -266,13 +288,24 @@ public final class NetGuest {
     private var lastPing = -Double.infinity
     private var pings = 0
 
+    private var lastHeard = -Double.infinity
+
     public init(me: NetPlayer) { self.me = me }
 
-    /// Call once the connection is up.
+    /// Call once the connection is up (again, after a reconnect: the host
+    /// recognises the player id and restores the same slot).
     public func connected(now: Double) {
-        send(.hello(version: Net.protocolVersion, player: me))
+        var hello = me
+        hello.id = myID ?? ""
+        lastHeard = now
+        pings = 0
+        send(.hello(version: Net.protocolVersion, player: hello))
         tick(now: now)
     }
+
+    /// The host hasn't been heard from for too long: the connection is
+    /// probably dead even if the socket hasn't noticed.
+    public func isStale(now: Double) -> Bool { now - lastHeard > Net.timeout }
 
     /// Pings quickly at first (to sync the clock), then every 2 s to track drift.
     public func tick(now: Double) {
@@ -306,6 +339,7 @@ public final class NetGuest {
     }
 
     public func receive(chunk c: NetChunk, now: Double) {
+        lastHeard = now
         guard let r = receiver, !r.done, c.chartHash == r.offer.song.chartHash else { return }
         do {
             if let entry = try r.write(c) {
@@ -323,6 +357,7 @@ public final class NetGuest {
     }
 
     public func receive(_ m: NetMessage, now: Double) {
+        lastHeard = now
         switch m {
         case .welcome(let id, let host):
             myID = id
@@ -336,6 +371,13 @@ public final class NetGuest {
         case .pong(let t0, let hostTime):
             clock.add(t0: t0, hostTime: hostTime, t2: now)
         case .pick(let s):
+            // The same pick again (we rejoined after a drop): keep the song
+            // we have or are receiving — it may be playing right now.
+            if s.chartHash == song?.chartHash {
+                let have = hasSong(s.chartHash) || receiver?.done == true && receiver?.offer.song.chartHash == s.chartHash
+                if receiver == nil || receiver?.done == true { send(.songStatus(chartHash: s.chartHash, has: have)) }
+                return
+            }
             song = s
             finals = [:]
             receiver?.cancel()

@@ -151,6 +151,8 @@ final class GameSession: ObservableObject {
     /// Everyone's live scores and names, for the in-game scoreboard.
     @Published var remoteScores: [NetScore] = []
     var remoteNames: [String: String] = [:]
+    /// Players whose connection dropped (shown greyed on the scoreboard).
+    @Published var remoteOffline: Set<String> = []
     var localPlayerID = ""
     /// The song is loaded but waiting for its scheduled start (online).
     private(set) var started = false

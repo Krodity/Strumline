@@ -22,6 +22,19 @@ extension AppModel {
         online = o
     }
 
+    /// Addresses joined by hand, newest first (one tap to rejoin).
+    var recentOnlineAddresses: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "online.recent") ?? [] }
+        set { UserDefaults.standard.set(Array(newValue.prefix(5)), forKey: "online.recent") }
+    }
+
+    func joinOnline(address: String) {
+        let a = address.trimmingCharacters(in: .whitespaces)
+        guard let ep = OnlineSession.endpoint(for: a) else { return }
+        recentOnlineAddresses = [a] + recentOnlineAddresses.filter { $0 != a }
+        joinOnline(ep)
+    }
+
     func leaveOnline() {
         online?.leave()
         online = nil

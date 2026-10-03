@@ -32,6 +32,8 @@ final class OnlineSession: ObservableObject {
     var onAbort: () -> Void = {}
     /// Live scores or results changed while a song is on.
     var onScores: ([NetScore]) -> Void = { _ in }
+    /// Players changed (joined, dropped, came back) while a song is on.
+    var onPlayers: ([NetPlayer]) -> Void = { _ in }
     var onFinals: () -> Void = {}
     /// Host: the files of a library song, to send to guests without it.
     var songSource: (String) -> NetSongSource? = { _ in nil }
@@ -75,6 +77,13 @@ final class OnlineSession: ObservableObject {
         h.send = { [weak self] c, m in self?.send(m, to: c) }
         h.onChange = { [weak self] in self?.pullFromHost() }
         h.sendChunk = { [weak self] c, chunk in self?.sendChunk(chunk, to: c) }
+        // The host gave up on a silent guest: just close the socket (NetHost
+        // already marked them disconnected).
+        h.closeConnection = { [weak self] id in
+            self?.framers[id] = nil
+            self?.inFlight[id] = nil
+            self?.connections.removeValue(forKey: id)?.cancel()
+        }
         // At most 8 chunks (512 KB) waiting per guest; more as they go out.
         h.canSend = { [weak self] c in (self?.inFlight[c] ?? 99) < 8 && self?.connections[c] != nil }
         h.songSource = { [weak self] hash in
@@ -156,6 +165,7 @@ final class OnlineSession: ObservableObject {
 
     private func pullFromHost() {
         guard let h = host else { return }
+        if h.players != players { onPlayers(h.players) }
         players = h.players
         song = h.song
         playing = h.phase == .playing
@@ -174,7 +184,8 @@ final class OnlineSession: ObservableObject {
         guest = g
         g.send = { [weak self] m in self?.guestConnection?.send(content: NetFramer.encode(m), completion: .idempotent) }
         g.onChange = { [weak self] in self?.pullFromGuest() }
-        g.hasSong = { [weak self] hash in self?.hasSong(hash) ?? false }
+        // A song the host already sent counts as having it.
+        g.hasSong = { [weak self] hash in self.map { $0.hasSong(hash) || $0.receivedSongs[hash] != nil } ?? false }
         g.onStart = { [weak self] hash, at, speed in
             self?.playing = true
             self?.onStart(hash, at, speed)
@@ -190,31 +201,67 @@ final class OnlineSession: ObservableObject {
             self?.receivedSongs[entry.chartHash] = entry
             self?.download = nil
         }
+        guestEndpoint = endpoint
         status = "Connecting…"
+        connectGuest()
+        startTimer()
+    }
+
+    // Guest connection, with automatic reconnects: a dropped Wi-Fi / Tailscale
+    // link or a locked phone shouldn't end the session. The host gives the
+    // same slot back (see NetHost hello handling).
+    private var guestEndpoint: NWEndpoint?
+    private var reconnectAttempts = 0
+    private var reconnectPending = false
+    private static let maxReconnects = 15  // × 2 s
+
+    private func connectGuest() {
+        guard let endpoint = guestEndpoint, ended == nil else { return }
+        guestConnection?.cancel()
+        guestFramer = NetFramer()
         let c = NWConnection(to: endpoint, using: .tcp)
         guestConnection = c
         c.stateUpdateHandler = { [weak self] st in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, c === self.guestConnection else { return }
                 switch st {
                 case .ready:
+                    self.reconnectAttempts = 0
                     self.status = "Connected"
                     self.guest?.connected(now: Self.now)
                 case .waiting(let e): self.status = "Waiting: \(e.localizedDescription)"
-                case .failed(let e): self.finish("Connection lost: \(e.localizedDescription)")
+                case .failed(let e): self.connectionLost(e.localizedDescription)
                 default: break
                 }
             }
         }
         c.start(queue: .main)
         receive(on: c) { [weak self] data in
-            guard let self else { return false }
+            guard let self, c === self.guestConnection else { return false }
             do {
                 for incoming in try self.guestFramer.append(data) { self.guest?.receive(incoming, now: Self.now) }
                 return true
             } catch { return false }
-        } closed: { [weak self] in self?.finish("Connection closed") }
-        startTimer()
+        } closed: { [weak self] in
+            guard let self, c === self.guestConnection else { return }
+            self.connectionLost("Connection closed")
+        }
+    }
+
+    /// The link to the host dropped: try again every 2 s for ~30 s.
+    private func connectionLost(_ why: String) {
+        guard ended == nil, !reconnectPending else { return }
+        guestConnection?.cancel()
+        guestConnection = nil
+        guard reconnectAttempts < Self.maxReconnects else { finish("Lost the host: \(why)"); return }
+        reconnectAttempts += 1
+        reconnectPending = true
+        status = "Reconnecting… (\(reconnectAttempts))"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self else { return }
+            self.reconnectPending = false
+            self.connectGuest()
+        }
     }
 
     /// "100.64.1.2" or "host.local" (port optional: "host:47821").
@@ -230,6 +277,7 @@ final class OnlineSession: ObservableObject {
 
     private func pullFromGuest() {
         guard let g = guest else { return }
+        if g.players != players { onPlayers(g.players) }
         players = g.players
         song = g.song
         myID = g.myID ?? ""
@@ -264,8 +312,13 @@ final class OnlineSession: ObservableObject {
     private func startTimer() {
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.host?.tick(now: Self.now)
-                self?.guest?.tick(now: Self.now)
+                guard let self else { return }
+                self.host?.tick(now: Self.now)
+                if let g = self.guest {
+                    g.tick(now: Self.now)
+                    // Silent host: the socket may not notice, so we do.
+                    if self.guestConnection != nil, g.myID != nil, g.isStale(now: Self.now) { self.connectionLost("No reply from the host") }
+                }
             }
         }
     }

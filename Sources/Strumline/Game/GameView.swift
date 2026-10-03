@@ -68,7 +68,7 @@ struct GameView: View {
 
             // Online: everyone's live score.
             if !session.remoteScores.isEmpty {
-                OnlineScoreboard(scores: session.remoteScores, names: session.remoteNames, me: session.localPlayerID)
+                OnlineScoreboard(scores: session.remoteScores, names: session.remoteNames, me: session.localPlayerID, offline: session.remoteOffline)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .padding(.leading, 10)
                     .allowsHitTesting(false)
@@ -238,14 +238,18 @@ struct OnlineScoreboard: View {
     var scores: [NetScore]
     var names: [String: String]
     var me: String
+    var offline: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(scores.sorted { $0.score > $1.score }.enumerated()), id: \.element.playerID) { rank, s in
                 HStack(spacing: 6) {
                     Text("\(rank + 1)").font(.caption2.bold()).foregroundStyle(.secondary).frame(width: 12)
+                    if offline.contains(s.playerID) {
+                        Image(systemName: "wifi.slash").font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
                     Text(names[s.playerID] ?? "Player").font(.caption.bold()).lineLimit(1)
-                        .foregroundStyle(s.playerID == me ? Theme.accent : .white)
+                        .foregroundStyle(s.playerID == me ? Theme.accent : offline.contains(s.playerID) ? .secondary : .white)
                     Spacer(minLength: 6)
                     if s.spActive { Image(systemName: "bolt.fill").font(.system(size: 9)).foregroundStyle(Palette.sp) }
                     Text("\(s.score)").font(.caption.monospacedDigit())
