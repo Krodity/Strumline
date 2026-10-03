@@ -113,7 +113,7 @@ struct ResultsView: View {
                 stat("Best streak", "\(r.stats.bestStreak)")
                 stat("Overstrums", "\(r.stats.overstrums)")
                 stat("Star power", "\(r.stats.spPhrasesHit)/\(r.stats.spPhrasesTotal)")
-                stat("Speed", "\(Int((r.modifiers.songSpeed * 100).rounded()))%")
+                stat("Speed", Fmt.percent(r.modifiers.songSpeed))
             }
             if !r.modifiers.activeNames.isEmpty {
                 Text(r.modifiers.activeNames.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
@@ -174,10 +174,15 @@ struct ResultsView: View {
         return w
     }
 
+    /// After an online song the only way on is back to the lobby (the host
+    /// starts the next song for everyone).
+    private var online: Bool { app.lastPlayWasOnline && app.online != nil }
+
     /// Controller choices, in order: Retry, Continue, then Practice if offered.
-    private var choiceCount: Int { practiceTarget == nil ? 2 : 3 }
+    private var choiceCount: Int { online ? 1 : practiceTarget == nil ? 2 : 3 }
 
     private func choose(_ i: Int) {
+        if online { app.continueFromResults(); return }
         switch i {
         case 0: app.restartCurrent()
         case 2: practiceWeakest()
@@ -191,7 +196,16 @@ struct ResultsView: View {
                  practice: PracticeRange(startSection: w.index, endSection: w.index))
     }
 
-    private var buttons: some View {
+    @ViewBuilder private var buttons: some View {
+        if online {
+            MenuButton(title: "Back to Lobby", systemImage: "person.2.fill") { app.continueFromResults() }
+                .focusRing(true)
+        } else {
+            localButtons
+        }
+    }
+
+    private var localButtons: some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
                 MenuButton(title: "Retry", systemImage: "arrow.counterclockwise") { choose(0) }

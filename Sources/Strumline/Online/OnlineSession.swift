@@ -23,6 +23,8 @@ final class OnlineSession: ObservableObject {
     /// Set when the session is over (refused, host left, connection lost).
     @Published private(set) var ended: String?
     @Published private(set) var playing = false
+    /// Host: guests still finishing the last song.
+    @Published private(set) var stillPlaying = 0
 
     // App hooks
     /// Start `chartHash` at local host time `at`, song speed `speed`.
@@ -169,6 +171,7 @@ final class OnlineSession: ObservableObject {
         players = h.players
         song = h.song
         playing = h.phase == .playing
+        stillPlaying = h.stillPlaying.count
         let s = h.players.compactMap { h.scores[$0.id] }
         if s != scores { scores = s; onScores(s) }
         if h.finals != finals { finals = h.finals; onFinals() }
@@ -381,9 +384,17 @@ final class OnlineSession: ObservableObject {
         host?.close()
         guest?.leave()
         if guest != nil { OnlineSession.clearSongCache() }
-        // Let the goodbye go out before closing.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.teardown() }
         ended = "Left"
+        // Stop listening and advertising right away (frees the port, so
+        // hosting again works at once), then let the goodbye go out before
+        // closing the connections. `self` is held on purpose: the app drops
+        // this session as soon as leave() returns, and a weak reference
+        // would skip the teardown and leave the listener running.
+        listener?.cancel()
+        listener = nil
+        timer?.invalidate()
+        timer = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.teardown() }
     }
 
     func name(of id: String) -> String { players.first { $0.id == id }?.name ?? "Player" }

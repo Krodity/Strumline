@@ -673,6 +673,24 @@ do {
           "F1 phase 3: a connected player's slot can't be taken (\(refused))")
 }
 
+// The host knows who's still finishing the last song after it's back in
+// the lobby (so its Start can warn), and forgets them as they finish.
+do {
+    let host = NetHost(host: NetPlayer(id: "", name: "Ant", instrument: .guitar, difficulty: .expert))
+    let guest = NetGuest(me: NetPlayer(id: "", name: "PC", instrument: .guitar, difficulty: .expert))
+    host.send = { _, m in guest.receive(m, now: 0) }
+    guest.send = { m in host.receive(m, from: 1, now: 0) }
+    guest.hasSong = { _ in true }
+    guest.connected(now: 0)
+    host.pick(NetSong(chartHash: "abc", name: "Demo", artist: "S", lengthMs: 1000))
+    host.start(at: 1, speed: 1)
+    host.finishLocal(PlayStats())
+    host.endSong(abort: false)
+    let during = host.stillPlaying.count
+    guest.finish(PlayStats())
+    check(during == 1 && host.stillPlaying.isEmpty && host.phase == .lobby, "F1: host tracks a guest still finishing after it's back in the lobby (\(during) → \(host.stillPlaying.count))")
+}
+
 print(failures == 0 ? "\nALL CHECKS PASSED" : "\n\(failures) FAILURE(S)")
 exit(failures == 0 ? 0 : 1)
 

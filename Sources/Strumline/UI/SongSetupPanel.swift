@@ -358,7 +358,7 @@ struct SongSetupPanel: View {
                 .font(.caption.bold())
             }
             if !practice {
-                SliderRow(title: "Song speed", value: mods.songSpeed, range: 0.25...3.0, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })
+                SliderRow(title: "Song speed", value: mods.songSpeed, range: 0.25...3.0, step: 0.05, format: Fmt.percent)
                     .focusRing(isFocused(.songSpeed), inset: -6)
             }
         }
@@ -379,7 +379,7 @@ struct SongSetupPanel: View {
                     ForEach(sections.indices.filter { $0 >= startSection }, id: \.self) { i in Text("\(i + 1). \(sections[i].name)").tag(i) }
                 }
             }
-            SliderRow(title: "Song speed", value: $app.settings.practiceSpeed, range: 0.25...3.0, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })
+            SliderRow(title: "Song speed", value: $app.settings.practiceSpeed, range: 0.25...3.0, step: 0.05, format: Fmt.percent)
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(Theme.Surface.card))

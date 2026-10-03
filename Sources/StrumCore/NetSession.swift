@@ -31,6 +31,9 @@ public final class NetHost {
     public private(set) var phase = Phase.lobby
     public private(set) var scores: [String: NetScore] = [:]
     public private(set) var finals: [String: PlayStats] = [:]
+    /// Guests who started the last song and haven't finished it yet (the
+    /// host can be back in the lobby first).
+    public private(set) var stillPlaying: Set<String> = []
     public let hostID = "host"
 
     private var playerOf: [Int: String] = [:]  // connection → player id
@@ -124,6 +127,7 @@ public final class NetHost {
             scoresDirty = true
         case .finished(_, let stats):
             finals[id] = stats
+            stillPlaying.remove(id)
             broadcast(.finished(playerID: id, stats: stats), except: c)
             onChange()
         case .leave:
@@ -138,6 +142,7 @@ public final class NetHost {
         transfers[c] = nil
         lastHeard[c] = nil
         guard let id = playerOf.removeValue(forKey: c) else { return }
+        if phase == .lobby { stillPlaying.remove(id) }
         if phase == .lobby {
             players.removeAll { $0.id == id }
         } else if let i = players.firstIndex(where: { $0.id == id }) {
@@ -172,6 +177,7 @@ public final class NetHost {
         phase = .playing
         scores = [:]
         finals = [:]
+        stillPlaying = Set(readyPlayers.map(\.id).filter { $0 != hostID })
         broadcast(.start(chartHash: s.chartHash, hostTime: hostTime, speed: speed))
         onChange()
         return true

@@ -219,9 +219,9 @@ struct PlayerSettingsSheet: View {
             r.append(.pick("kit", "Part", "Drum kit", options: DrumPlayMode.allCases, label: { $0.displayName }, selection: drumMode))
         }
         r += [
-            NavRow(id: "ns", section: "Highway", title: "Track (note) speed", kind: .slider(noteSpeed, 0.25...10, step: 0.05, format: { String(format: "%.2f×", $0) })),
-            NavRow(id: "hl", section: "Highway", title: "Highway length", kind: .slider(highwayLength, 0.5...10, step: 0.05, format: { String(format: "%.2f×", $0) })),
-            NavRow(id: "hs", section: "Highway", title: "Highway scale", kind: .slider(highwayScale, 0.5...1.5, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })),
+            NavRow(id: "ns", section: "Highway", title: "Track (note) speed", kind: .slider(noteSpeed, 0.25...10, step: 0.05, format: Fmt.times)),
+            NavRow(id: "hl", section: "Highway", title: "Highway length", kind: .slider(highwayLength, 0.5...10, step: 0.05, format: Fmt.times)),
+            NavRow(id: "hs", section: "Highway", title: "Highway scale", kind: .slider(highwayScale, 0.5...1.5, step: 0.05, format: Fmt.percent)),
             .pick("hwimg", "Highway", "Highway image", detail: "Add images in Settings › Custom Content.", options: [String?.none] + CustomAssets.highwayFiles.map { Optional($0) }, label: { $0.map { ($0 as NSString).deletingPathExtension } ?? "Default" }, selection: highwayImage),
             NavRow(id: "lefty", section: "Highway", title: "Lefty flip", kind: .toggle(lefty)),
             NavRow(id: "mods", section: "Modifiers", title: "Modifiers…", detail: modifiers.wrappedValue.activeNames.joined(separator: ", ").nilIfEmpty, kind: .button(destructive: false) { showMods = true }),

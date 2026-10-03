@@ -21,7 +21,7 @@ struct SettingsView: View {
         return [
             open(.gameplay, "Hit window \(Int(s.hitWindowMs)) ms · Lefty \(s.leftyFlip ? "on" : "off")"),
             open(.audio, "Volumes, offsets, calibration"),
-            open(.display, "Track speed \(String(format: "%.2f×", s.noteSpeed)) · backgrounds"),
+            open(.display, "Track speed \(Fmt.times(s.noteSpeed)) · backgrounds"),
             open(.touch, s.showTouchControls ? s.touchMode.displayName : "On-screen controls off"),
             open(.custom, "Highway images, backgrounds, wallpaper"),
             open(.controls, "Bindings for keyboard, controllers and kits"),
@@ -97,40 +97,37 @@ struct SettingsPageView: View {
         var photos: PHPickerFilter { self == .highway ? .images : .any(of: [.images, .videos]) }
     }
 
-    private func pct(_ v: Double) -> String { "\(Int((v * 100).rounded()))%" }
-    private func x(_ v: Double) -> String { String(format: "%.2f×", v) }
-    private func ms(_ v: Double) -> String { "\(Int(v)) ms" }
 
     private var rows: [NavRow] {
         let s = $app.settings
         switch page {
         case .gameplay:
             return [
-                NavRow(id: "hw", section: "Judging", title: "Hit window", detail: "Clone Hero uses 140 ms.", kind: .slider(s.hitWindowMs, 80...200, step: 5, format: ms)),
+                NavRow(id: "hw", section: "Judging", title: "Hit window", detail: "Clone Hero uses 140 ms.", kind: .slider(s.hitWindowMs, 80...200, step: 5, format: Fmt.ms)),
                 NavRow(id: "timing", section: "Judging", title: "Show hit timing", detail: "Early/late marks under the strikeline.", kind: .toggle(s.showHitTiming)),
                 NavRow(id: "lefty", section: "Player 1", title: "Lefty flip", kind: .toggle(s.leftyFlip)),
                 NavRow(id: "info", section: "Player 1", title: "Drum kit, part and difficulty are picked per song; other players set theirs in the player bar.", kind: .info),
             ]
         case .audio:
             return [
-                NavRow(id: "mv", section: "Volume", title: "Band / music", kind: .slider(s.musicVolume, 0...1, step: 0.05, format: pct)),
-                NavRow(id: "iv", section: "Volume", title: "Your instrument", kind: .slider(s.instrumentVolume, 0...1, step: 0.05, format: pct)),
-                NavRow(id: "sv", section: "Volume", title: "Sound effects", kind: .slider(s.sfxVolume, 0...1, step: 0.05, format: pct)),
-                NavRow(id: "pv", section: "Volume", title: "Song previews", kind: .slider(s.previewVolume, 0...1, step: 0.05, format: pct)),
+                NavRow(id: "mv", section: "Volume", title: "Band / music", kind: .slider(s.musicVolume, 0...1, step: 0.05, format: Fmt.percent)),
+                NavRow(id: "iv", section: "Volume", title: "Your instrument", kind: .slider(s.instrumentVolume, 0...1, step: 0.05, format: Fmt.percent)),
+                NavRow(id: "sv", section: "Volume", title: "Sound effects", kind: .slider(s.sfxVolume, 0...1, step: 0.05, format: Fmt.percent)),
+                NavRow(id: "pv", section: "Volume", title: "Song previews", kind: .slider(s.previewVolume, 0...1, step: 0.05, format: Fmt.percent)),
                 NavRow(id: "mute", section: "Misses", title: "Mute instrument on miss", kind: .toggle(s.muteOnMiss)),
                 NavRow(id: "misssfx", section: "Misses", title: "Miss sounds", kind: .toggle(s.missSounds)),
                 NavRow(id: "cal", section: "Timing", title: "Calibrate audio…", detail: "Tap along to clicks; sets the audio offset.", kind: .button(destructive: false) { calibrating = true }),
-                NavRow(id: "ao", section: "Timing", title: "Audio offset", detail: "Raise it if you still have to hit early.", kind: .slider(s.audioOffsetMs, -300...300, step: 1, format: ms)),
-                NavRow(id: "vo", section: "Timing", title: "Video offset", detail: "Raise it if notes look late against the music.", kind: .slider(s.videoOffsetMs, -300...300, step: 1, format: ms)),
+                NavRow(id: "ao", section: "Timing", title: "Audio offset", detail: "Raise it if you still have to hit early.", kind: .slider(s.audioOffsetMs, -300...300, step: 1, format: Fmt.ms)),
+                NavRow(id: "vo", section: "Timing", title: "Video offset", detail: "Raise it if notes look late against the music.", kind: .slider(s.videoOffsetMs, -300...300, step: 1, format: Fmt.ms)),
             ]
         case .display:
             return [
-                NavRow(id: "ns", section: "Highway", title: "Track (note) speed", kind: .slider(s.noteSpeed, 0.25...10, step: 0.05, format: x)),
-                NavRow(id: "hl", section: "Highway", title: "Highway length", kind: .slider(s.highwayLength, 0.5...10, step: 0.05, format: x)),
-                NavRow(id: "hs", section: "Highway", title: "Highway width", kind: .slider(s.highwayScale, 0.5...1.5, step: 0.05, format: pct)),
+                NavRow(id: "ns", section: "Highway", title: "Track (note) speed", kind: .slider(s.noteSpeed, 0.25...10, step: 0.05, format: Fmt.times)),
+                NavRow(id: "hl", section: "Highway", title: "Highway length", kind: .slider(s.highwayLength, 0.5...10, step: 0.05, format: Fmt.times)),
+                NavRow(id: "hs", section: "Highway", title: "Highway width", kind: .slider(s.highwayScale, 0.5...1.5, step: 0.05, format: Fmt.percent)),
                 .pick("bgsrc", "Background", "Gameplay background", options: GameBackgroundSource.allCases, label: { $0.displayName }, selection: s.gameBackground),
                 NavRow(id: "vid", section: "Background", title: "Song background videos", kind: .toggle(s.showVideos)),
-                NavRow(id: "dim", section: "Background", title: "Background dim", kind: .slider(s.backgroundDim, 0...1, step: 0.05, format: pct)),
+                NavRow(id: "dim", section: "Background", title: "Background dim", kind: .slider(s.backgroundDim, 0...1, step: 0.05, format: Fmt.percent)),
                 NavRow(id: "fps", section: "Debug", title: "Show FPS", kind: .toggle(s.showFPS)),
             ]
         case .touch:

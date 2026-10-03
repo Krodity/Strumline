@@ -94,7 +94,7 @@ struct GameView: View {
         // than the pause menu underneath.
         .onChange(of: showQuickSettings) { _, open in InputManager.shared.gameplayActive = !open }
         .sheet(isPresented: $showQuickSettings) {
-            QuickSettingsSheet()
+            QuickSettingsSheet(online: isOnline)
                 .environmentObject(app)
                 .presentationDetents([.medium, .large])
         }
@@ -162,13 +162,24 @@ struct GameView: View {
         RoundedRectangle(cornerRadius: Theme.Radius.large).stroke(Theme.accent, lineWidth: session.pauseSelection == i ? Theme.focusWidth : 0)
     }
 
-    private func pauseAction(_ i: Int) {
-        switch i {
-        case 0: session.setPaused(false)
-        case 1: app.restartCurrent()
-        case 2: showQuickSettings = true
-        default: session.quit()
-        }
+    private struct PauseItem {
+        let title: String
+        let symbol: String
+        var destructive = false
+        let run: () -> Void
+    }
+
+    private var isOnline: Bool { app.online != nil && app.lastPlayWasOnline }
+
+    /// The pause menu. Online there's no Restart (the host starts songs for
+    /// everyone), and the host's Quit ends the song for everyone.
+    private var pauseItems: [PauseItem] {
+        var items = [PauseItem(title: "Resume", symbol: "play.fill") { session.setPaused(false) }]
+        if !isOnline { items.append(PauseItem(title: "Restart", symbol: "arrow.counterclockwise") { app.restartCurrent() }) }
+        items.append(PauseItem(title: "Adjust", symbol: "slider.horizontal.3") { showQuickSettings = true })
+        let quit = !isOnline ? "Quit" : app.online?.isHost == true ? "End Song for Everyone" : "Leave Song"
+        items.append(PauseItem(title: quit, symbol: "xmark", destructive: true) { session.quit() })
+        return items
     }
 
     private var pauseMenu: some View {
@@ -179,17 +190,21 @@ struct GameView: View {
             Text("\(session.instrument.displayName) · \(session.difficulty.displayName)")
                 .font(.caption).foregroundStyle(.secondary)
             VStack(spacing: 10) {
-                MenuButton(title: "Resume", systemImage: "play.fill") { pauseAction(0) }
-                    .overlay(focusRing(0))
-                MenuButton(title: "Restart", systemImage: "arrow.counterclockwise") { pauseAction(1) }
-                    .overlay(focusRing(1))
-                MenuButton(title: "Adjust", systemImage: "slider.horizontal.3") { pauseAction(2) }
-                    .overlay(focusRing(2))
-                MenuButton(title: "Quit", systemImage: "xmark", role: .destructive) { pauseAction(3) }
-                    .overlay(focusRing(3))
+                let items = pauseItems
+                ForEach(items.indices, id: \.self) { i in
+                    MenuButton(title: items[i].title, systemImage: items[i].symbol, role: items[i].destructive ? .destructive : nil) { items[i].run() }
+                        .overlay(focusRing(i))
+                }
             }
             .frame(maxWidth: 280)
-            .onAppear { session.pauseAction = { pauseAction($0) } }
+            .onAppear {
+                // Controller / keyboard drive the same list.
+                session.pauseItemCount = pauseItems.count
+                session.pauseAction = { i in
+                    let items = pauseItems
+                    if items.indices.contains(i) { items[i].run() }
+                }
+            }
         }
         .padding(28)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.sheet).fill(.ultraThinMaterial))
@@ -201,17 +216,22 @@ struct GameView: View {
 struct QuickSettingsSheet: View {
     @EnvironmentObject var app: AppModel
     @Environment(\.dismiss) private var dismiss
+    /// Online songs can't be restarted from here (the host starts songs).
+    var online = false
     var body: some View {
         let st = $app.settings
         NavigationStack {
             NavForm(rows: [
                 // Just what you tweak mid-song; the rest lives in Settings.
-                NavRow(id: "ns", section: "Highway", title: "Track (note) speed", kind: .slider(st.noteSpeed, 0.25...10, step: 0.05, format: { String(format: "%.2f×", $0) })),
-                NavRow(id: "ao", section: "Calibration", title: "Audio offset", kind: .slider(st.audioOffsetMs, -300...300, step: 1, format: { "\(Int($0)) ms" })),
-                NavRow(id: "vo", section: "Calibration", title: "Video offset", kind: .slider(st.videoOffsetMs, -300...300, step: 1, format: { "\(Int($0)) ms" })),
+                NavRow(id: "ns", section: "Highway", title: "Track (note) speed", kind: .slider(st.noteSpeed, 0.25...10, step: 0.05, format: Fmt.times)),
+                NavRow(id: "ao", section: "Calibration", title: "Audio offset", kind: .slider(st.audioOffsetMs, -300...300, step: 1, format: Fmt.ms)),
+                NavRow(id: "vo", section: "Calibration", title: "Video offset", kind: .slider(st.videoOffsetMs, -300...300, step: 1, format: Fmt.ms)),
+            ] + (online ? [
+                NavRow(id: "note", section: "Apply", title: "These apply from the next song.", kind: .info),
+            ] : [
                 NavRow(id: "note", section: "Apply", title: "Choose Restart to apply these to the current song.", kind: .info),
                 NavRow(id: "restart", section: "Apply", title: "Restart now", kind: .button(destructive: false) { dismiss(); app.restartCurrent() }),
-            ], onBack: { dismiss() })
+            ]), onBack: { dismiss() })
             .sheetChrome("Adjust") { dismiss() }
         }
     }

@@ -188,6 +188,16 @@ struct Wordmark: View {
     }
 }
 
+/// Number formats shared by every settings row.
+enum Fmt {
+    /// 0.85 → "85%"
+    static func percent(_ v: Double) -> String { "\(Int((v * 100).rounded()))%" }
+    /// 1.5 → "1.50×"
+    static func times(_ v: Double) -> String { String(format: "%.2f×", v) }
+    /// 12.0 → "12 ms"
+    static func ms(_ v: Double) -> String { "\(Int(v)) ms" }
+}
+
 func formatLength(_ ms: Int) -> String {
     let s = max(0, ms / 1000)
     return String(format: "%d:%02d", s / 60, s % 60)

@@ -140,7 +140,8 @@ final class GameSession: ObservableObject {
     @Published var pauseSelection = 0
     /// Runs a pause-menu row (set by GameView).
     var pauseAction: ((Int) -> Void)?
-    static let pauseItems = 4
+    /// How many pause-menu rows there are (set by GameView; online has fewer).
+    var pauseItemCount = 4
     var onFinish: (([GameResult]) -> Void)?
     var onQuit: (() -> Void)?
 
@@ -452,7 +453,7 @@ final class GameSession: ObservableObject {
                 return
             }
             guard let nav = MenuNav(actions) else { continue }
-            let n = GameSession.pauseItems
+            let n = max(1, pauseItemCount)
             switch nav {
             case .up, .left: DispatchQueue.main.async { self.pauseSelection = (self.pauseSelection + n - 1) % n }
             case .down, .right: DispatchQueue.main.async { self.pauseSelection = (self.pauseSelection + 1) % n }

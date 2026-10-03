@@ -184,16 +184,19 @@ final class InputManager: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func dispatch(_ b: InputBinding, down: Bool, value: Double = 1, velocity: Int? = nil, time: Double, device: String) {
-        if down, capture(b) { return }
-        let actions = bindings.actions(for: b)
-        if !gameplayActive {
+    /// One physical press or release, as the actions bound to it: to the
+    /// menus outside a song (presses only), queued for the game during one.
+    private func deliver(_ actions: [GameAction], down: Bool, value: Double, velocity: Int? = nil, time: Double, device: String) {
+        guard gameplayActive else {
             if down { menu(Set(actions), device: device) }
             return
         }
-        for a in actions {
-            push(ActionEvent(action: a, down: down, value: value, velocity: velocity, time: time, device: device))
-        }
+        for a in actions { push(ActionEvent(action: a, down: down, value: value, velocity: velocity, time: time, device: device)) }
+    }
+
+    private func dispatch(_ b: InputBinding, down: Bool, value: Double = 1, velocity: Int? = nil, time: Double, device: String) {
+        if down, capture(b) { return }
+        deliver(bindings.actions(for: b), down: down, value: value, velocity: velocity, time: time, device: device)
     }
 
     // MARK: Keyboard
@@ -264,13 +267,7 @@ final class InputManager: ObservableObject, @unchecked Sendable {
         // Union of the actions bound to any of the element's names.
         var actions: [GameAction] = []
         for k in keys { for a in bindings.actions(for: .button(k)) where !actions.contains(a) { actions.append(a) } }
-        if !gameplayActive {
-            if pressed { menu(Set(actions), device: device) }
-            return
-        }
-        for a in actions {
-            push(ActionEvent(action: a, down: pressed, value: pressed ? 1 : 0, velocity: nil, time: time, device: device))
-        }
+        deliver(actions, down: pressed, value: pressed ? 1 : 0, time: time, device: device)
     }
 
     private func handle(element: GCControllerElement, time: Double, device: String) {
@@ -296,28 +293,19 @@ final class InputManager: ObservableObject, @unchecked Sendable {
 
     private func axis(_ key: String, _ v: Double, time: Double, device: String) {
         // Axis-as-button for capture and for bindings like "stick up = strum".
-        let posKey = device + "|" + key + "+", negKey = device + "|" + key + "-"
-        let pos = v > 0.6, neg = v < -0.6
-        if buttonState[posKey] != pos {
-            buttonState[posKey] = pos
-            if pos, capture(.axis(key, positive: true)) { return }
-            let acts = bindings.actions(for: .axis(key, positive: true)).filter { $0 != .whammy }
-            if !gameplayActive { if pos { menu(Set(acts), device: device) } }
-            else { for a in acts { push(ActionEvent(action: a, down: pos, value: v, velocity: nil, time: time, device: device)) } }
+        for positive in [true, false] {
+            let stateKey = device + "|" + key + (positive ? "+" : "-")
+            let on = positive ? v > 0.6 : v < -0.6
+            guard buttonState[stateKey] != on else { continue }
+            buttonState[stateKey] = on
+            if on, capture(.axis(key, positive: positive)) { return }
+            let acts = bindings.actions(for: .axis(key, positive: positive)).filter { $0 != .whammy }
+            deliver(acts, down: on, value: v, time: time, device: device)
         }
-        if buttonState[negKey] != neg {
-            buttonState[negKey] = neg
-            if neg, capture(.axis(key, positive: false)) { return }
-            let acts = bindings.actions(for: .axis(key, positive: false)).filter { $0 != .whammy }
-            if !gameplayActive { if neg { menu(Set(acts), device: device) } }
-            else { for a in acts { push(ActionEvent(action: a, down: neg, value: v, velocity: nil, time: time, device: device)) } }
-        }
-        // Continuous value for whammy.
+        // Continuous value for whammy (once, even if bound in both directions).
         guard gameplayActive else { return }
-        for p in [true, false] {
-            for a in bindings.actions(for: .axis(key, positive: p)) where a == .whammy {
-                push(ActionEvent(action: .whammy, down: true, value: v, velocity: nil, time: time, device: device))
-            }
+        if [true, false].contains(where: { bindings.actions(for: .axis(key, positive: $0)).contains(.whammy) }) {
+            push(ActionEvent(action: .whammy, down: true, value: v, velocity: nil, time: time, device: device))
         }
     }
 

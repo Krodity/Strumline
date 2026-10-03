@@ -466,6 +466,12 @@ final class AppModel: ObservableObject {
             }
             return
         }
+        // A song still running (online: the host started the next one before
+        // this player finished) is shut down properly, not just replaced.
+        if let old = session {
+            old.quitSilently()
+            session = nil
+        }
         lastPlay = (song, instrument, difficulty, practice)
         lastPlayWasOnline = onlineStart != nil
         log.info("play \(song.name, privacy: .public) \(instrument.rawValue, privacy: .public)/\(difficulty.displayName, privacy: .public) practice=\(practice != nil)")

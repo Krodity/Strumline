@@ -109,7 +109,8 @@ private struct LobbyView: View {
                 let getting = guests.filter { $0.download != nil }.count
                 let out = guests.filter { $0.hasSong == false && $0.download == nil }.count
                 r.append(NavRow(id: "start", section: "Song", title: "Start for everyone",
-                                detail: getting > 0 ? "\(getting) player(s) still getting the song: wait, or they'll sit this one out"
+                                detail: o.stillPlaying > 0 ? "\(o.stillPlaying) player(s) still finishing the last song: starting now cuts it short"
+                                    : getting > 0 ? "\(getting) player(s) still getting the song: wait, or they'll sit this one out"
                                     : out > 0 ? "\(out) player(s) don't have it and will sit out" : "Starts on every device 4 seconds after you press it",
                                 symbol: "play.fill", kind: .button(destructive: false) { o.startSong(speed: app.settings.modifiers.songSpeed) }))
             }
