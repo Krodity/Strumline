@@ -201,7 +201,8 @@ final class OnlineSession: ObservableObject {
         OnlineSession.clearSongCache()
         g.songCache = OnlineSession.songCache
         g.onSongReceived = { [weak self] entry in
-            self?.receivedSongs[entry.chartHash] = entry
+            // One sent song at a time: receiving clears the cache folder.
+            self?.receivedSongs = [entry.chartHash: entry]
             self?.download = nil
         }
         guestEndpoint = endpoint
@@ -281,6 +282,11 @@ final class OnlineSession: ObservableObject {
     private func pullFromGuest() {
         guard let g = guest else { return }
         if g.players != players { onPlayers(g.players) }
+        // A different pick deletes the song sent earlier (NetGuest cancels
+        // its receiver), so stop offering it.
+        if let pick = g.song?.chartHash, receivedSongs.keys.contains(where: { $0 != pick }) {
+            receivedSongs = receivedSongs.filter { $0.key == pick }
+        }
         players = g.players
         song = g.song
         myID = g.myID ?? ""
@@ -347,8 +353,6 @@ final class OnlineSession: ObservableObject {
 
     // MARK: Actions
 
-    var clockReady: Bool { guest?.clock.isReady ?? true }
-
     func pick(_ s: SongEntry) {
         host?.pick(NetSong(chartHash: s.chartHash, name: s.name, artist: s.artist, lengthMs: s.lengthMs))
     }
@@ -397,7 +401,6 @@ final class OnlineSession: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.teardown() }
     }
 
-    func name(of id: String) -> String { players.first { $0.id == id }?.name ?? "Player" }
 }
 
 /// Finds hosts on the local network (Bonjour).

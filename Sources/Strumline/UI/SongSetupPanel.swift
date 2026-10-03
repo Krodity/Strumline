@@ -27,13 +27,18 @@ struct SongSetupPanel: View {
     /// Controller focus row: see `focusRows`.
     @State private var focusRow: FocusRow = .play
 
-    enum FocusRow: Hashable { case instrument, difficulty, kit, modifiers, songSpeed, play }
+    enum FocusRow: Hashable { case instrument, difficulty, kit, modifiers, songSpeed, practiceStart, practiceEnd, practiceSpeed, play }
 
     private var focusRows: [FocusRow] {
         var r: [FocusRow] = [.instrument, .difficulty]
         if instrument == .drums { r.append(.kit) }
         r.append(.modifiers)
-        if !practice { r.append(.songSpeed) }
+        if practice {
+            if !sections.isEmpty { r += [.practiceStart, .practiceEnd] }
+            r.append(.practiceSpeed)
+        } else {
+            r.append(.songSpeed)
+        }
         r.append(.play)
         return r
     }
@@ -260,7 +265,8 @@ struct SongSetupPanel: View {
             let n = max(0, min(rows.count - 1, idx + (nav == .down ? 1 : -1)))
             focusRow = rows[n]
             // Play is pinned below the scroll view, so it needs no scrolling.
-            let target = [FocusRow.instrument, .difficulty, .kit].contains(focusRow) ? "p1" : "p2"
+            let target = [FocusRow.instrument, .difficulty, .kit].contains(focusRow) ? "p1"
+                : [FocusRow.practiceStart, .practiceEnd, .practiceSpeed].contains(focusRow) ? "pp" : "p2"
             withAnimation { scroller?.scrollTo(target, anchor: .center) }
         case .left, .right:
             adjust(focusRow, by: nav == .right ? 1 : -1)
@@ -295,6 +301,16 @@ struct SongSetupPanel: View {
         case .songSpeed:
             let v = app.settings.modifiers.songSpeed + Double(d) * 0.05
             app.settings.modifiers.songSpeed = min(3, max(0.25, (v * 20).rounded() / 20))
+        case .practiceStart:
+            guard !sections.isEmpty else { return }
+            startSection = max(0, min(sections.count - 1, startSection + d))
+            endSection = max(endSection, startSection)
+        case .practiceEnd:
+            guard !sections.isEmpty else { return }
+            endSection = max(startSection, min(sections.count - 1, endSection + d))
+        case .practiceSpeed:
+            let v = app.settings.practiceSpeed + Double(d) * 0.05
+            app.settings.practiceSpeed = min(3, max(0.25, (v * 20).rounded() / 20))
         case .modifiers, .play:
             break
         }
@@ -375,12 +391,18 @@ struct SongSetupPanel: View {
                 Picker("Start", selection: $startSection) {
                     ForEach(sections.indices, id: \.self) { i in Text("\(i + 1). \(sections[i].name)").tag(i) }
                 }
+                .focusRing(isFocused(.practiceStart), inset: -6)
+                // The end can't come before the start.
+                .onChange(of: startSection) { _, s in if endSection < s { endSection = s } }
                 Picker("End", selection: $endSection) {
                     ForEach(sections.indices.filter { $0 >= startSection }, id: \.self) { i in Text("\(i + 1). \(sections[i].name)").tag(i) }
                 }
+                .focusRing(isFocused(.practiceEnd), inset: -6)
             }
             SliderRow(title: "Song speed", value: $app.settings.practiceSpeed, range: 0.25...3.0, step: 0.05, format: Fmt.percent)
+                .focusRing(isFocused(.practiceSpeed), inset: -6)
         }
+        .id("pp")
         .padding(12)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.medium).fill(Theme.Surface.card))
     }
